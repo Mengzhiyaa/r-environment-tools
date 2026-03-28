@@ -20,9 +20,6 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-    defaults:
-      run:
-        working-directory: r-environment-tools
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,9 +47,8 @@ jobs:
 
       - name: Create Conda R environment
         run: conda create -n r-conda-env r-base -c conda-forge -y
-        shell: bash
 
-      # ── Build & Coverage ──
+      # ── Rust + Coverage ──
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -77,5 +73,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-baseline-${{ matrix.os }}
-          path: r-environment-tools/lcov.info
+          path: lcov.info
           retention-days: 90

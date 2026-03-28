@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use ret::{find::find_and_report_installations, locators::create_locators};
 use ret_core::{
-    os_environment::EnvironmentApi, r_installation::RInstallationKind, Configuration, Locator,
+    os_environment::EnvironmentApi, r_installation::RInstallationKind, Configuration,
 };
 use ret_reporter::{cache::CacheReporter, collect};
 

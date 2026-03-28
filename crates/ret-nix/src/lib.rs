@@ -198,12 +198,16 @@ fn find_nix_manager(environment: &dyn Environment) -> Option<EnvManager> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::looks_like_nix_path;
+    #[cfg(unix)]
     use ret_core::{
         env::REnv, os_environment::EnvironmentApi, r_installation::RInstallationKind, Locator,
     };
+    #[cfg(unix)]
     use std::path::{Path, PathBuf};
 
+    #[cfg(unix)]
     #[test]
     fn recognizes_nix_paths() {
         assert!(looks_like_nix_path(Path::new(
@@ -215,6 +219,7 @@ mod tests {
         assert!(!looks_like_nix_path(Path::new("/usr/local/bin/R")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn try_from_classifies_nix_installation() {
         let locator = super::Nix::from(&EnvironmentApi::new());

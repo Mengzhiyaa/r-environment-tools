@@ -641,7 +641,12 @@ mod tests {
             build_find_response(vec![installation], OutputSchema::Pet).expect("expected payload");
         let items = value.as_array().expect("pet response should be an array");
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["prefix"], "/tmp/R");
+        // norm_case may change the path on Windows (e.g. /tmp/R -> D:\tmp\R)
+        let expected_prefix = ret_fs::path::norm_case(PathBuf::from("/tmp/R"));
+        assert_eq!(
+            items[0]["prefix"],
+            expected_prefix.to_string_lossy().to_string()
+        );
         assert_eq!(items[0]["kind"], "Conda");
     }
 

@@ -149,7 +149,11 @@ mod tests {
 
         let env = ret_core::env::REnv::new(executable, None, None);
         let found = get_pixi_prefix(&env);
-        assert_eq!(found, Some(prefix));
+        // Canonicalize both paths to resolve Windows 8.3 short names
+        // (e.g., RUNNER~1 vs runneradmin on GitHub Actions runners).
+        let found = found.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+        let expected = std::fs::canonicalize(&prefix).unwrap_or(prefix);
+        assert_eq!(found, Some(expected));
     }
 
     #[test]

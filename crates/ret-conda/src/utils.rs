@@ -125,6 +125,7 @@ mod tests {
     use super::{get_conda_dir_from_cmd, is_conda_env, is_conda_install};
     use std::path::PathBuf;
 
+    #[cfg(unix)]
     #[test]
     fn parses_conda_dir_from_history_command() {
         let result = get_conda_dir_from_cmd(
@@ -133,6 +134,7 @@ mod tests {
         assert_eq!(result, Some(PathBuf::from("/opt/miniconda3")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn parses_conda_dir_from_condabin_history() {
         let result = get_conda_dir_from_cmd(

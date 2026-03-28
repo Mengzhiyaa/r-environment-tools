@@ -5,17 +5,12 @@ on:
   push:
     branches-ignore:
       - main
-
-permissions:
-  contents: read
+      - release*
 
 jobs:
   clippy:
-    name: Clippy & Format
+    name: Clippy and Format Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: r-environment-tools
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,7 +19,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: clippy, rustfmt
+
+      - name: Install clippy
+        run: rustup component add clippy
 
       - name: Cargo Fetch
         run: cargo fetch
@@ -32,5 +29,5 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy
+      - name: Run Clippy
         run: cargo clippy --all-features -- -Dwarnings

@@ -1,4 +1,4 @@
-name: PR Check
+name: PR/CI Check
 
 on:
   pull_request:
@@ -7,19 +7,24 @@ on:
       - release*
       - release/*
       - release-*
+  push:
+    branches:
+      - main
+      - release*
+      - release/*
+      - release-*
   workflow_dispatch:
-
-permissions:
-  actions: read
-  contents: read
-  pull-requests: write
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
-  # Job 1: Unit tests (no real R required)
+  # Job 1: Integration tests with real R environments
+  #
+  # Installs R via multiple package managers on each platform, then
+  # runs the CI test suite to validate that each locator correctly
+  # discovers the installations it is responsible for.
   # ──────────────────────────────────────────────────────────────────
-  unit-tests:
-    name: Unit Tests (${{ matrix.os }})
+  tests:
+    name: Tests
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,56 +32,21 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            run_cli: "yes"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            run_cli: "yes"
           - os: macos-latest
             target: x86_64-apple-darwin
-    defaults:
-      run:
-        working-directory: r-environment-tools
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      - name: Cargo Fetch
-        run: cargo fetch
-
-      - name: Run Unit Tests
-        run: cargo test --frozen --target ${{ matrix.target }} -- --nocapture
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: trace
-
-  # ──────────────────────────────────────────────────────────────────
-  # Job 2: Integration tests with real R environments
-  # ──────────────────────────────────────────────────────────────────
-  integration-tests:
-    name: Integration Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            target: x86_64-apple-darwin
-    defaults:
-      run:
-        working-directory: r-environment-tools
+            run_cli: "yes"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       # ── Install System R ──
+      # On Linux this installs to /usr/bin/R (LinuxGlobalR locator).
+      # On macOS this installs to /Library/Frameworks/R.framework (MacFramework locator).
+      # On Windows this installs to C:\Program Files\R (WindowsRegistry locator).
       - name: Install R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -88,19 +58,27 @@ jobs:
           which R || where R
         shell: bash
 
-      # ── Install Conda ──
-      - name: Add Conda to PATH (Windows)
+      # ── Homebrew (macOS only) ──
+      # Homebrew is the native package manager on macOS.
+      # This tests the Homebrew locator against a real brew-installed R.
+      - name: Homebrew R
+        if: startsWith(matrix.os, 'macos')
+        run: brew install r
+        shell: bash
+
+      # ── Conda (all platforms) ──
+      - name: Add Conda to PATH
         if: startsWith(matrix.os, 'windows')
         run: |
           $path = $env:PATH + ";" + $env:CONDA + "\condabin"
           echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH (Ubuntu)
+      - name: Add Conda to PATH
         if: startsWith(matrix.os, 'ubuntu')
         run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
         shell: bash
 
-      - name: Install Conda + add to PATH (macOS)
+      - name: Install Conda + add to PATH
         if: startsWith(matrix.os, 'macos')
         run: |
           curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
@@ -109,12 +87,13 @@ jobs:
           echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
         shell: bash
 
-      - name: Create Conda R environment
-        run: |
-          conda create -n r-conda-env r-base -c conda-forge -y
-        shell: bash
+      - name: Check Conda version
+        run: conda info --all
 
-      # ── Install Pixi ──
+      - name: Create Conda R environment
+        run: conda create -n r-conda-env r-base -c conda-forge -y
+
+      # ── Pixi (all platforms) ──
       - name: Install Pixi
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
@@ -124,11 +103,20 @@ jobs:
         run: |
           pixi init pixi-r-project
           cd pixi-r-project
-          pixi add r-base -c conda-forge
+          pixi project channel add conda-forge
+          pixi add r-base
           pixi install
         shell: bash
 
-      # ── Build & Run Tests ──
+      # ── Chocolatey (Windows only) ──
+      # Chocolatey is pre-installed on GitHub Windows runners.
+      # This tests the Chocolatey locator against a real choco-installed R.
+      - name: Chocolatey R
+        if: startsWith(matrix.os, 'windows')
+        run: choco install r.project --no-progress -y
+        shell: bash
+
+      # ── Rust ──
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -137,36 +125,51 @@ jobs:
 
       - name: Cargo Fetch
         run: cargo fetch
-
-      - name: Print discovered R installations
-        run: cargo run --release --target ${{ matrix.target }} -- find -l -v
-        env:
-          RUST_LOG: warn
         shell: bash
 
-      - name: Run Integration Tests
-        run: cargo test --frozen --features ci --target ${{ matrix.target }} -- --nocapture --test-threads=1
+      - name: Find R Environments
+        if: matrix.run_cli == 'yes'
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
+        shell: bash
+
+      - name: Run Tests
+        run: cargo test --frozen --features ci -- --nocapture --test-threads=1
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: trace
+        shell: bash
 
   # ──────────────────────────────────────────────────────────────────
-  # Job 3: Homebrew container test (Linux)
+  # Job 2: Container tests
+  #
+  # Homebrew on Ubuntu requires a container (homebrew/brew image)
+  # because Linuxbrew is not trivially installable on standard
+  # runners. This mirrors PET's ci-homebrew-container approach.
   # ──────────────────────────────────────────────────────────────────
   container-tests:
-    name: Container Tests (Homebrew)
-    runs-on: ubuntu-latest
+    name: Tests in Containers
     container:
-      image: homebrew/brew
-    defaults:
-      run:
-        working-directory: r-environment-tools
+      image: ${{ matrix.image }}
+      options: --user=root
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - feature: ci-homebrew-container
+            os: ubuntu-latest
+            image: homebrew/brew
+            target: x86_64-unknown-linux-musl
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install R via Homebrew
-        run: brew install r
+      # Homebrew R (Linuxbrew)
+      - name: Homebrew R
+        if: startsWith(matrix.image, 'homebrew')
+        run: |
+          brew update || true
+          brew install r
         shell: bash
 
       - name: Verify R installation
@@ -175,30 +178,72 @@ jobs:
           which R
         shell: bash
 
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        shell: bash
+      # Rust
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: |
-          source "$HOME/.cargo/env"
-          cargo fetch
+        run: cargo fetch
         shell: bash
 
-      - name: Run Homebrew Container Tests
-        run: |
-          source "$HOME/.cargo/env"
-          cargo test --frozen --features ci-homebrew-container -- --nocapture --test-threads=1
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: trace
+      - name: Find R Environments
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
+        shell: bash
+
+      - name: Run Tests
+        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
         shell: bash
 
   # ──────────────────────────────────────────────────────────────────
-  # Job 4: Cross-platform release builds
+  # Job 3: Cross-platform builds
   # ──────────────────────────────────────────────────────────────────
   builds:
-    name: Build
-    uses: ./.github/workflows/build.yml
+    name: Builds
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            run_cli: "yes"
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            run_cli: "yes"
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            run_cli: "yes"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Run Tests
+        run: cargo test --frozen
+        shell: bash
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ret-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/ret*

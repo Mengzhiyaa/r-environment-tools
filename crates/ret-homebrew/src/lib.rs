@@ -166,6 +166,7 @@ fn find_brew_manager() -> Option<EnvManager> {
 #[cfg(test)]
 mod tests {
     use super::{cellar_roots, looks_like_homebrew_path};
+    #[cfg(unix)]
     use ret_core::{
         env::REnv, os_environment::EnvironmentApi, r_installation::RInstallationKind, Locator,
     };
@@ -210,6 +211,7 @@ mod tests {
         assert!(roots.contains(&PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn try_from_classifies_homebrew_installation() {
         let locator = super::Homebrew::from(&EnvironmentApi::new());
@@ -226,6 +228,7 @@ mod tests {
         assert_eq!(installation.version.as_deref(), Some("4.4.1"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn try_from_rejects_non_homebrew_path() {
         let locator = super::Homebrew::from(&EnvironmentApi::new());

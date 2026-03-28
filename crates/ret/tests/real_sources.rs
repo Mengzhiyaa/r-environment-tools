@@ -10,6 +10,7 @@ use ret_core::{
     r_installation::{RInstallation, RInstallationKind},
     Configuration, Locator,
 };
+#[cfg(unix)]
 use ret_homebrew::Homebrew;
 use ret_reporter::collect;
 

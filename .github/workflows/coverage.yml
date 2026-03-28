@@ -7,7 +7,6 @@ on:
       - release*
       - release/*
       - release-*
-  workflow_dispatch:
 
 permissions:
   actions: read
@@ -16,7 +15,7 @@ permissions:
 
 jobs:
   coverage:
-    name: Coverage (${{ matrix.os }})
+    name: Coverage
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -26,32 +25,33 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-    defaults:
-      run:
-        working-directory: r-environment-tools
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Post In-Progress Comment (Linux)
-        if: startsWith(matrix.os, 'ubuntu') && github.event_name == 'pull_request'
+      - name: Post Coverage Started Comment (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: coverage-linux
           message: |
-            ## Coverage Report (Linux) :hourglass_flowing_sand:
+            ## Test Coverage Report (Linux)
 
-            Running coverage analysis... Results will appear here when complete.
+            :hourglass_flowing_sand: **Coverage analysis in progress...**
 
-      - name: Post In-Progress Comment (Windows)
-        if: startsWith(matrix.os, 'windows') && github.event_name == 'pull_request'
+            This comment will be updated with results when the analysis completes.
+
+      - name: Post Coverage Started Comment (Windows)
+        if: startsWith(matrix.os, 'windows')
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: coverage-windows
           message: |
-            ## Coverage Report (Windows) :hourglass_flowing_sand:
+            ## Test Coverage Report (Windows)
 
-            Running coverage analysis... Results will appear here when complete.
+            :hourglass_flowing_sand: **Coverage analysis in progress...**
+
+            This comment will be updated with results when the analysis completes.
 
       # ── Install R ──
       - name: Install R
@@ -71,11 +71,13 @@ jobs:
         run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
         shell: bash
 
+      - name: Check Conda version
+        run: conda info --all
+
       - name: Create Conda R environment
         run: conda create -n r-conda-env r-base -c conda-forge -y
-        shell: bash
 
-      # ── Build & Coverage ──
+      # ── Rust + Coverage ──
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -100,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-pr-${{ matrix.os }}
-          path: r-environment-tools/lcov.info
+          path: lcov.info
 
       # ── Compare with Baseline ──
       - name: Download Baseline Coverage

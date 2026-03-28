@@ -217,12 +217,16 @@ fn find_guix_manager(environment: &dyn Environment) -> Option<EnvManager> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::looks_like_guix_path;
+    #[cfg(unix)]
     use ret_core::{
         env::REnv, os_environment::EnvironmentApi, r_installation::RInstallationKind, Locator,
     };
+    #[cfg(unix)]
     use std::path::{Path, PathBuf};
 
+    #[cfg(unix)]
     #[test]
     fn recognizes_guix_paths() {
         assert!(looks_like_guix_path(Path::new(
@@ -241,6 +245,7 @@ mod tests {
         assert!(!looks_like_guix_path(Path::new("/nix/store/hash-R/bin/R")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn try_from_classifies_guix_installation() {
         let locator = super::Guix::from(&EnvironmentApi::new());

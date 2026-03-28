@@ -4,9 +4,6 @@ on:
   workflow_call:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build:
     name: Build (${{ matrix.target }})
@@ -25,9 +22,6 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
-    defaults:
-      run:
-        working-directory: r-environment-tools
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,5 +42,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ret-${{ matrix.target }}
-          path: r-environment-tools/target/${{ matrix.target }}/release/ret${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
+          path: target/${{ matrix.target }}/release/ret*
           retention-days: 1

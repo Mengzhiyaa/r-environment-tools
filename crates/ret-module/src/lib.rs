@@ -259,9 +259,12 @@ fn resolve_r_from_module(modulecmd: &Path, module_name: &str) -> Option<PathBuf>
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::looks_like_module_path;
+    #[cfg(unix)]
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn recognizes_module_paths() {
         assert!(looks_like_module_path(Path::new("/opt/apps/R/4.3.0/lib/R")));

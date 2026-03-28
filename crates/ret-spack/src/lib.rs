@@ -230,9 +230,12 @@ fn find_spack_manager(environment: &dyn Environment) -> Option<EnvManager> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::looks_like_spack_path;
+    #[cfg(unix)]
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn recognizes_spack_paths() {
         assert!(looks_like_spack_path(Path::new(

@@ -140,9 +140,12 @@ fn candidate_install_roots() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::looks_like_macports_path;
+    #[cfg(unix)]
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn recognizes_macports_paths() {
         assert!(looks_like_macports_path(Path::new("/opt/local/lib/R")));

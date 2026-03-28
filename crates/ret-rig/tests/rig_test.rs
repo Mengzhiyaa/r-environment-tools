@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ret_core::{
     env::REnv, manager::EnvManagerType, r_installation::RInstallationKind, Configuration, Locator,
 };
+use ret_fs::path::norm_case;
 use ret_rig::Rig;
 
 #[test]
@@ -23,10 +24,10 @@ fn try_from_classifies_rig_managed_installation() {
         .expect("rig path should be classified");
 
     assert_eq!(installation.kind, Some(RInstallationKind::Rig));
-    assert_eq!(installation.home, Some(PathBuf::from("/opt/R/4.4.1")));
+    assert_eq!(installation.home, Some(norm_case("/opt/R/4.4.1")));
     assert_eq!(
         installation.executable,
-        Some(PathBuf::from("/opt/R/4.4.1/bin/R"))
+        Some(norm_case("/opt/R/4.4.1/bin/R"))
     );
     assert_eq!(installation.version.as_deref(), Some("4.4.1"));
 
