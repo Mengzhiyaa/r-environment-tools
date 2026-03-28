@@ -514,7 +514,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "ret"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "env_logger",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "ret-chocolatey"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-r-utils",
@@ -559,7 +559,7 @@ dependencies = [
 
 [[package]]
 name = "ret-conda"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lazy_static",
  "log",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "ret-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "log",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "ret-fs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "glob",
  "log",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "ret-guix"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-fs",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "ret-homebrew"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "ret-core",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "ret-jsonrpc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "env_logger",
  "log",
@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "ret-linux-global-r"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-fs",
@@ -637,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "ret-mac-framework"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-fs",
@@ -646,7 +646,7 @@ dependencies = [
 
 [[package]]
 name = "ret-macports"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-r-utils",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "ret-module"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "ret-core",
@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "ret-nix"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-fs",
@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "ret-pixi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-r-utils",
@@ -681,7 +681,7 @@ dependencies = [
 
 [[package]]
 name = "ret-r-utils"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lazy_static",
  "log",
@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "ret-reporter"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "env_logger",
  "log",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "ret-rig"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "ret-core",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "ret-scoop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-r-utils",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "ret-spack"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-fs",
@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "ret-windows-hq"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-r-utils",
@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "ret-windows-registry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ret-core",
  "ret-fs",

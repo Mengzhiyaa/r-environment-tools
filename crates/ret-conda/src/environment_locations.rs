@@ -456,7 +456,8 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let tmp = tempfile::TempDir::new().unwrap();
-        let root = tmp.path().join("miniforge3");
+        // Canonicalize to resolve macOS /var -> /private/var symlink
+        let root = tmp.path().canonicalize().unwrap().join("miniforge3");
         let condabin = root.join("condabin");
         std::fs::create_dir_all(root.join("conda-meta")).unwrap();
         std::fs::create_dir_all(&condabin).unwrap();

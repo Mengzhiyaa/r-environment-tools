@@ -340,7 +340,39 @@ impl Locator for Conda {
             return Some(installation);
         }
 
-        // Only proceed with resolution if we have a version hint
+        // Try fast path (conda-meta) — resolves metadata without spawning R.
+        // This is important for the find API where try_from is called with
+        // a bare executable and no version hint.
+        if let Some(pkg_info) = RCondaPackageInfo::from(&prefix) {
+            if let Some(r_home) = Self::infer_conda_r_home(&prefix) {
+                let manager = self.get_manager_for_prefix(&prefix);
+                let symlinks = collect_r_executables(&prefix, &r_home);
+                let preferred_exe = pick_preferred_executable(&env.executable, &symlinks);
+                let conda_dir = manager.as_ref().and_then(|m| m.conda_dir.clone());
+                let name = get_conda_env_name(&prefix, &conda_dir);
+                let display_name = name
+                    .as_ref()
+                    .map(|n| format!("Conda R ({n})"))
+                    .or(Some("Conda R".to_string()));
+
+                let installation = RInstallationBuilder::new(Some(RInstallationKind::Conda))
+                    .display_name(display_name)
+                    .name(name)
+                    .executable(Some(preferred_exe))
+                    .home(Some(r_home))
+                    .version(Some(pkg_info.version))
+                    .arch(pkg_info.arch)
+                    .manager(manager.map(|m| m.to_manager()))
+                    .symlinks(Some(symlinks))
+                    .build();
+
+                self.environments
+                    .insert(prefix, installation.clone());
+                return Some(installation);
+            }
+        }
+
+        // Fall back to slow path (spawn R) — only if we have a version hint
         env.version.as_ref()?;
 
         let manager = self.get_manager_for_prefix(&prefix);
