@@ -31,20 +31,22 @@ jobs:
           mkdir -p release
 
           # Linux and macOS targets → tar.gz
-          for target in x86_64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin; do
-            dir="artifacts/ret-${target}"
+          for spec in linux-x64:x86_64-unknown-linux-musl darwin-x64:x86_64-apple-darwin darwin-arm64:aarch64-apple-darwin; do
+            label="${spec%%:*}"
+            dir="artifacts/ret-release-${label}-archive"
             if [ -d "$dir" ]; then
               chmod +x "${dir}/ret"
-              tar -czf "release/ret-${VERSION}-${target}.tar.gz" \
+              tar -czf "release/ret-${VERSION}-${label}.tar.gz" \
                 -C "$dir" ret
             fi
           done
 
           # Windows targets → zip
-          for target in x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
-            dir="artifacts/ret-${target}"
+          for spec in windows-x64:x86_64-pc-windows-msvc windows-arm64:aarch64-pc-windows-msvc; do
+            label="${spec%%:*}"
+            dir="artifacts/ret-release-${label}-archive"
             if [ -d "$dir" ]; then
-              (cd "$dir" && zip -r "../../release/ret-${VERSION}-${target}.zip" ret.exe)
+              (cd "$dir" && zip -r "../../release/ret-${VERSION}-${label}.zip" ret.exe)
             fi
           done
 

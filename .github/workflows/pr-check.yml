@@ -201,7 +201,7 @@ jobs:
   # Job 3: Cross-platform builds
   # ──────────────────────────────────────────────────────────────────
   builds:
-    name: Builds
+    name: Build (${{ matrix.arch }}-${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -209,16 +209,26 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            platform: windows
+            arch: x64
           - os: windows-latest
             target: aarch64-pc-windows-msvc
+            platform: windows
+            arch: arm64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            platform: linux
+            arch: x64
             run_cli: "yes"
           - os: macos-latest
             target: x86_64-apple-darwin
+            platform: darwin
+            arch: x64
             run_cli: "yes"
           - os: macos-latest
             target: aarch64-apple-darwin
+            platform: darwin
+            arch: arm64
             run_cli: "yes"
     steps:
       - name: Checkout
@@ -245,5 +255,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ret-${{ matrix.target }}
+          name: ret-release-${{ matrix.platform }}-${{ matrix.arch }}-archive
           path: target/${{ matrix.target }}/release/ret*
