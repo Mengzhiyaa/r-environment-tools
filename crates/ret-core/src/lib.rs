@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use env::REnv;
 use manager::EnvManager;
-use output::OutputSchema;
 use r_installation::{RInstallation, RInstallationKind};
 use reporter::Reporter;
 
@@ -15,7 +14,7 @@ pub mod env;
 pub mod homebrew_utils;
 pub mod manager;
 pub mod os_environment;
-pub mod output;
+
 pub mod r_installation;
 pub mod reporter;
 pub mod telemetry;
@@ -41,8 +40,6 @@ pub struct Configuration {
     pub conda_executable: Option<PathBuf>,
     /// Optional path to the `rig` executable.
     pub rig_executable: Option<PathBuf>,
-    /// Output schema used by JSON and JSON-RPC surfaces.
-    pub output_schema: OutputSchema,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

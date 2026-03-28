@@ -72,16 +72,13 @@ fn ret_executable() -> PathBuf {
     executable
 }
 
-fn run_ret<I, S>(args: I, envs: &[(&str, &str)]) -> Output
+fn run_ret<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
     let mut command = Command::new(ret_executable());
     command.args(args);
-    for (key, value) in envs {
-        command.env(key, value);
-    }
 
     let output = command.output().expect("failed to run ret");
     assert!(
@@ -99,22 +96,18 @@ fn parse_stdout_json(output: &Output) -> Value {
 }
 
 #[test]
-fn find_json_ret_schema_reports_fake_installation() {
+fn find_json_reports_fake_installation() {
     let fake = FakeRInstallation::new("4.4.1");
     let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
-    let output = run_ret(
-        [
-            "find",
-            fake.home.to_str().expect("invalid path"),
-            "--json",
-            "--cache-directory",
-            cache_dir.path().to_str().expect("invalid cache path"),
-        ],
-        &[],
-    );
+    let output = run_ret([
+        "find",
+        fake.home.to_str().expect("invalid path"),
+        "--json",
+        "--cache-directory",
+        cache_dir.path().to_str().expect("invalid cache path"),
+    ]);
 
     let value = parse_stdout_json(&output);
-    assert!(value.get("environments").is_none());
 
     let installations = value["installations"]
         .as_array()
@@ -133,71 +126,22 @@ fn find_json_ret_schema_reports_fake_installation() {
 }
 
 #[test]
-fn find_json_honors_pet_schema_env_var() {
-    let fake = FakeRInstallation::new("4.3.2");
-    let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
-    let output = run_ret(
-        [
-            "find",
-            fake.home.to_str().expect("invalid path"),
-            "--json",
-            "--cache-directory",
-            cache_dir.path().to_str().expect("invalid cache path"),
-        ],
-        &[("RET_OUTPUT_SCHEMA", "pet")],
-    );
-
-    let value = parse_stdout_json(&output);
-    assert!(value.get("installations").is_none());
-
-    let environments = value["environments"]
-        .as_array()
-        .expect("environments should be an array");
-    let environment = environments
-        .iter()
-        .find(|item| item["prefix"] == fake.home.to_string_lossy().as_ref())
-        .expect("fake installation was not mapped into pet schema");
-
-    assert_eq!(
-        environment["executable"],
-        fake.executable.to_string_lossy().as_ref()
-    );
-    assert_eq!(environment["version"], "4.3.2");
-    assert_eq!(environment["prefix"], fake.home.to_string_lossy().as_ref());
-}
-
-#[test]
-fn resolve_json_dual_schema_reports_installation_and_environment() {
+fn resolve_json_reports_installation() {
     let fake = FakeRInstallation::new("4.2.0");
     let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
-    let output = run_ret(
-        [
-            "resolve",
-            fake.executable.to_str().expect("invalid path"),
-            "--json",
-            "--output-schema",
-            "dual",
-            "--cache-directory",
-            cache_dir.path().to_str().expect("invalid cache path"),
-        ],
-        &[],
-    );
+    let output = run_ret([
+        "resolve",
+        fake.executable.to_str().expect("invalid path"),
+        "--json",
+        "--cache-directory",
+        cache_dir.path().to_str().expect("invalid cache path"),
+    ]);
 
     let value = parse_stdout_json(&output);
-    let installation = &value["installation"];
-    let environment = &value["environment"];
-
-    assert_eq!(installation["home"], fake.home.to_string_lossy().as_ref());
+    assert_eq!(value["home"], fake.home.to_string_lossy().as_ref());
     assert_eq!(
-        installation["executable"],
+        value["executable"],
         fake.executable.to_string_lossy().as_ref()
     );
-    assert_eq!(installation["version"], "4.2.0");
-
-    assert_eq!(environment["prefix"], fake.home.to_string_lossy().as_ref());
-    assert_eq!(
-        environment["executable"],
-        fake.executable.to_string_lossy().as_ref()
-    );
-    assert_eq!(environment["version"], "4.2.0");
+    assert_eq!(value["version"], "4.2.0");
 }

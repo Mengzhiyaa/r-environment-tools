@@ -102,7 +102,7 @@ fn ret_executable() -> PathBuf {
 struct RetJsonRpcClient {
     process: Child,
     stdout: BufReader<ChildStdout>,
-    environments: Vec<Value>,
+    installations: Vec<Value>,
     managers: Vec<Value>,
     telemetry: Vec<Value>,
     logs: Vec<Value>,
@@ -123,7 +123,7 @@ impl RetJsonRpcClient {
         Self {
             process,
             stdout: BufReader::new(stdout),
-            environments: vec![],
+            installations: vec![],
             managers: vec![],
             telemetry: vec![],
             logs: vec![],
@@ -174,8 +174,8 @@ impl RetJsonRpcClient {
         }
     }
 
-    fn take_environments(&mut self) -> Vec<Value> {
-        std::mem::take(&mut self.environments)
+    fn take_installations(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.installations)
     }
 
     fn take_telemetry(&mut self) -> Vec<Value> {
@@ -211,7 +211,7 @@ impl RetJsonRpcClient {
 
     fn record_notification(&mut self, method: &str, params: Value) {
         match method {
-            "environment" => self.environments.push(params),
+            "installation" => self.installations.push(params),
             "manager" => self.managers.push(params),
             "telemetry" => self.telemetry.push(params),
             "log" => self.logs.push(params),
@@ -228,7 +228,7 @@ impl Drop for RetJsonRpcClient {
 }
 
 #[test]
-fn refresh_search_paths_override_configured_directories_in_pet_mode() {
+fn refresh_search_paths_override_configured_directories() {
     let configured = FakeRInstallation::new("4.2.1");
     let requested = FakeRInstallation::new("4.3.0");
     let requested_root = requested.root().to_path_buf();
@@ -238,7 +238,6 @@ fn refresh_search_paths_override_configured_directories_in_pet_mode() {
         "configure",
         json!({
             "workspaceDirectories": [configured.home],
-            "outputSchema": "pet",
         }),
     );
     assert!(configure_result.is_null());
@@ -251,38 +250,38 @@ fn refresh_search_paths_override_configured_directories_in_pet_mode() {
     );
     assert!(refresh_result["duration"].as_u64().is_some());
 
-    let environments = client.take_environments();
+    let installations = client.take_installations();
     assert!(
-        !environments.is_empty(),
-        "refresh should report environments for the requested tree"
+        !installations.is_empty(),
+        "refresh should report installations for the requested tree"
     );
     assert!(
-        environments
+        installations
             .iter()
-            .any(|env| env["prefix"] == requested.home.to_string_lossy().as_ref()),
+            .any(|inst| inst["home"] == requested.home.to_string_lossy().as_ref()),
         "requested installation should be reported"
     );
     assert!(
-        environments.iter().all(|env| !matches!(
-            env["prefix"].as_str(),
-            Some(prefix) if prefix == configured.home.to_string_lossy().as_ref()
+        installations.iter().all(|inst| !matches!(
+            inst["home"].as_str(),
+            Some(home) if home == configured.home.to_string_lossy().as_ref()
         )),
         "configured workspace directories must not leak into refresh(searchPaths)"
     );
     assert!(
-        environments.iter().all(|env| {
-            env["prefix"]
+        installations.iter().all(|inst| {
+            inst["home"]
                 .as_str()
-                .or_else(|| env["executable"].as_str())
+                .or_else(|| inst["executable"].as_str())
                 .map(|path| path.starts_with(requested.root().to_string_lossy().as_ref()))
                 .unwrap_or(false)
         }),
-        "refresh(searchPaths) should stay within the requested tree in PET-compatible mode"
+        "refresh(searchPaths) should stay within the requested tree"
     );
 }
 
 #[test]
-fn find_resolve_conda_info_and_clear_cache_use_pet_shapes() {
+fn find_resolve_conda_info_and_clear_cache() {
     let fake = FakeRInstallation::new("4.4.0");
     let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
     let marker = cache_dir.path().join("marker");
@@ -292,27 +291,23 @@ fn find_resolve_conda_info_and_clear_cache_use_pet_shapes() {
         "configure",
         json!({
             "cacheDirectory": cache_dir.path().to_path_buf(),
-            "outputSchema": "pet",
         }),
     );
     assert!(configure_result.is_null());
 
     let find_result =
         client.send_request("find", json!({ "searchPath": fake.root().to_path_buf() }));
-    let environments = find_result
+    let installations = find_result
         .as_array()
-        .expect("find should return a PET-compatible array");
-    let found = environments
+        .expect("find should return an array of RInstallation");
+    let found = installations
         .iter()
-        .find(|env| env["prefix"] == fake.home.to_string_lossy().as_ref())
+        .find(|inst| inst["home"] == fake.home.to_string_lossy().as_ref())
         .expect("find did not return the fake installation");
     assert_eq!(found["version"], "4.4.0");
 
     let resolve_result = client.send_request("resolve", json!({ "executable": fake.executable }));
-    assert_eq!(
-        resolve_result["prefix"],
-        fake.home.to_string_lossy().as_ref()
-    );
+    assert_eq!(resolve_result["home"], fake.home.to_string_lossy().as_ref());
     assert_eq!(
         resolve_result["executable"],
         fake.executable.to_string_lossy().as_ref()
@@ -322,7 +317,7 @@ fn find_resolve_conda_info_and_clear_cache_use_pet_shapes() {
     let conda_info = client.send_request("condaInfo", Value::Null);
     assert!(
         conda_info.get("canSpawnConda").is_some(),
-        "condaInfo should return PET-compatible telemetry fields"
+        "condaInfo should return telemetry fields"
     );
 
     fs::create_dir_all(cache_dir.path()).expect("failed to ensure cache dir exists");
@@ -341,7 +336,7 @@ fn find_resolve_conda_info_and_clear_cache_use_pet_shapes() {
 }
 
 #[test]
-fn refresh_and_resolve_emit_pet_telemetry_events() {
+fn refresh_and_resolve_emit_telemetry_events() {
     let workspace = FakeRInstallation::new("4.5.0");
     let mismatched =
         FakeRInstallation::with_reported_home("4.5.1", &workspace.root().join("resolved-home"));
@@ -351,7 +346,6 @@ fn refresh_and_resolve_emit_pet_telemetry_events() {
         "configure",
         json!({
             "workspaceDirectories": [workspace.root().to_path_buf()],
-            "outputSchema": "pet",
         }),
     );
     assert!(configure_result.is_null());
@@ -367,19 +361,19 @@ fn refresh_and_resolve_emit_pet_telemetry_events() {
         .collect::<Vec<_>>();
     assert!(
         event_names.contains(&"GlobalEnvironmentsSearchCompleted"),
-        "refresh should emit PET global search telemetry"
+        "refresh should emit global search telemetry"
     );
     assert!(
         event_names.contains(&"GlobalPathVariableEnvironmentsSearchCompleted"),
-        "refresh should emit PET path search telemetry"
+        "refresh should emit path search telemetry"
     );
     assert!(
         event_names.contains(&"AllSearchPathsEnvironmentsSearchCompleted"),
-        "refresh should emit PET explicit search telemetry"
+        "refresh should emit explicit search telemetry"
     );
     assert!(
         event_names.contains(&"SearchCompleted"),
-        "refresh should emit PET search completion telemetry"
+        "refresh should emit search completion telemetry"
     );
     assert!(
         event_names.contains(&"RefreshPerformance"),
@@ -391,10 +385,10 @@ fn refresh_and_resolve_emit_pet_telemetry_events() {
     let telemetry = client.take_telemetry();
     let inaccuracy = telemetry
         .iter()
-        .find(|item| item["event"] == "InaccuratePythonEnvironmentInfo")
-        .expect("resolve should emit PET inaccuracy telemetry");
+        .find(|item| item["event"] == "InaccurateEnvironmentInfo")
+        .expect("resolve should emit inaccuracy telemetry");
     assert_eq!(
-        inaccuracy["data"]["inaccuratePythonEnvironmentInfo"]["invalidPrefix"],
+        inaccuracy["data"]["inaccurateEnvironmentInfo"]["invalidPrefix"],
         Value::Bool(true)
     );
 }

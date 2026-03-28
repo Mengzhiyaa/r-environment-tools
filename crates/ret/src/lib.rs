@@ -6,7 +6,6 @@ use locators::create_locators;
 use resolve::resolve_installation;
 use ret_core::{
     os_environment::{Environment, EnvironmentApi},
-    output::OutputSchema,
     r_installation::RInstallationKind,
     Configuration, Locator,
 };
@@ -67,7 +66,6 @@ pub struct FindOptions {
     pub json: bool,
     pub rig_executable: Option<PathBuf>,
     pub conda_executable: Option<PathBuf>,
-    pub output_schema: OutputSchema,
 }
 
 pub fn find_and_report_installations_stdio(options: FindOptions) {
@@ -122,7 +120,6 @@ fn create_config(options: &FindOptions) -> Configuration {
     config.conda_executable = options.conda_executable.clone();
     config.rig_executable = options.rig_executable.clone();
     config.cache_directory = options.cache_directory.clone();
-    config.output_schema = options.output_schema;
     config
 }
 
@@ -251,12 +248,8 @@ fn find_installations_json(
 
     println!(
         "{}",
-        serde_json::to_string_pretty(&build_find_output(
-            managers,
-            installations,
-            options.output_schema,
-        ))
-        .expect("failed to serialize R installations as JSON")
+        serde_json::to_string_pretty(&build_find_output(managers, installations))
+            .expect("failed to serialize R installations as JSON")
     );
 }
 
@@ -265,7 +258,6 @@ pub fn resolve_report_stdio(
     verbose: bool,
     cache_directory: Option<PathBuf>,
     json: bool,
-    output_schema: OutputSchema,
 ) {
     initialize_tracing(verbose);
 
@@ -286,7 +278,7 @@ pub fn resolve_report_stdio(
         if json {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&build_resolve_output(installation, output_schema))
+                serde_json::to_string_pretty(&build_resolve_output(installation))
                     .expect("failed to serialize resolved installation")
             );
         } else {
@@ -304,41 +296,13 @@ pub fn resolve_report_stdio(
 pub fn build_find_output(
     managers: Vec<ret_core::manager::EnvManager>,
     installations: Vec<ret_core::r_installation::RInstallation>,
-    output_schema: OutputSchema,
 ) -> Value {
-    match output_schema {
-        OutputSchema::Ret => json!({
-            "managers": managers,
-            "installations": installations,
-        }),
-        OutputSchema::Pet => {
-            let environments: Vec<Value> = installations.iter().map(|i| i.to_pet_json()).collect();
-            json!({
-                "managers": managers,
-                "environments": environments,
-            })
-        }
-        OutputSchema::Dual => {
-            let environments: Vec<Value> = installations.iter().map(|i| i.to_pet_json()).collect();
-            json!({
-                "managers": managers,
-                "installations": installations,
-                "environments": environments,
-            })
-        }
-    }
+    json!({
+        "managers": managers,
+        "installations": installations,
+    })
 }
 
-pub fn build_resolve_output(
-    installation: ret_core::r_installation::RInstallation,
-    output_schema: OutputSchema,
-) -> Value {
-    match output_schema {
-        OutputSchema::Ret => json!(installation),
-        OutputSchema::Pet => installation.to_pet_json(),
-        OutputSchema::Dual => json!({
-            "installation": installation,
-            "environment": installation.to_pet_json(),
-        }),
-    }
+pub fn build_resolve_output(installation: ret_core::r_installation::RInstallation) -> Value {
+    json!(installation)
 }

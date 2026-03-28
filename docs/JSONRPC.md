@@ -6,25 +6,6 @@ RET communicates over stdio using JSON-RPC 2.0 messages.
 - Responses and notifications are sent on stdout.
 - A sample client is available in [sample.js](./sample.js).
 
-This document focuses on the JSON-RPC server. The CLI exposes the same discovery and resolution features, but its default JSON schema is different:
-
-- JSON-RPC server default: `pet`
-- CLI default: `ret`
-
-## Output Schemas
-
-RET supports three output schemas on JSON and JSON-RPC surfaces.
-
-```typescript
-type OutputSchema = "ret" | "pet" | "dual";
-```
-
-- `ret`: native R installation objects
-- `pet`: PET-compatible environment objects
-- `dual`: both shapes at once
-
-The JSON-RPC server starts in `pet` mode by default. Set `outputSchema` in `configure` to switch modes.
-
 ## Common Types
 
 ```typescript
@@ -84,35 +65,6 @@ interface RInstallation {
 }
 ```
 
-The PET-compatible environment shape is lossy by design:
-
-- `home` becomes `prefix`
-- `MacFramework` becomes `MacPythonOrg`
-- several R-specific kinds collapse to `GlobalPaths`
-
-```typescript
-type PetEnvironmentKind =
-  | "Conda"
-  | "Homebrew"
-  | "LinuxGlobal"
-  | "MacPythonOrg"
-  | "GlobalPaths"
-  | "WindowsRegistry";
-
-interface Environment {
-  displayName?: string;
-  name?: string;
-  executable?: string;
-  kind?: PetEnvironmentKind;
-  version?: string;
-  prefix?: string;
-  manager?: Manager;
-  arch?: Architecture;
-  symlinks?: string[];
-  error?: string;
-}
-```
-
 ## Configuration Request
 
 This should be the first request sent to the server. Send it again only when configuration changes.
@@ -160,23 +112,10 @@ interface ConfigureParams {
    */
   rigExecutable?: string;
   /**
-   * Accepted for PET-compatible configure payloads, but ignored by RET.
-   */
-  pipenvExecutable?: string;
-  /**
-   * Accepted for PET-compatible configure payloads, but ignored by RET.
-   */
-  poetryExecutable?: string;
-  /**
    * Directory used to cache resolved installation details.
    * This directory may be deleted by `clear` or `clearCache`.
    */
   cacheDirectory?: string;
-  /**
-   * Output schema for JSON-RPC requests and notifications.
-   * Defaults to "pet" for the server.
-   */
-  outputSchema?: OutputSchema;
 }
 ```
 
@@ -199,7 +138,6 @@ interface RefreshParams {
    * Limits the search to a specific installation kind.
    *
    * Accepts native RET kind names such as "Rig" and "MacFramework".
-   * Also accepts PET-compatible aliases "MacPythonOrg" and "GlobalPaths".
    */
   searchKind?: string;
   /**
@@ -220,11 +158,11 @@ interface RefreshResult {
 }
 ```
 
-Refresh notifications depend on the configured output schema:
+Refresh streams notifications as results are discovered:
 
-- `ret`: `installation`, `manager`, `telemetry`
-- `pet`: `environment`, `manager`, `telemetry`
-- `dual`: `installation`, `environment`, `manager`, `telemetry`
+- `installation` — each discovered R installation
+- `manager` — each discovered environment manager
+- `telemetry` — timing and diagnostic events
 
 ## Find Request
 
@@ -239,7 +177,7 @@ _Request_:
 
 _Response_:
 
-- result: `FindResult | null`
+- result: `RInstallation[] | null`
 
 ```typescript
 interface FindParams {
@@ -251,21 +189,7 @@ interface FindParams {
    */
   searchPath: string;
 }
-
-type FindResult =
-  | RInstallation[]
-  | Environment[]
-  | {
-      installations: RInstallation[];
-      environments: Environment[];
-    };
 ```
-
-The response shape is selected by `outputSchema`:
-
-- `ret`: `RInstallation[]`
-- `pet`: `Environment[]`
-- `dual`: `{ installations, environments }`
 
 ## Resolve Request
 
@@ -278,7 +202,7 @@ _Request_:
 
 _Response_:
 
-- result: `ResolveResult`
+- result: `RInstallation`
 
 ```typescript
 interface ResolveParams {
@@ -287,27 +211,13 @@ interface ResolveParams {
    */
   executable: string;
 }
-
-type ResolveResult =
-  | RInstallation
-  | Environment
-  | {
-      installation: RInstallation;
-      environment: Environment;
-    };
 ```
 
-The response shape is selected by `outputSchema`:
-
-- `ret`: `RInstallation`
-- `pet`: `Environment`
-- `dual`: `{ installation, environment }`
-
-In PET-compatible modes, `resolve` may emit the telemetry event `InaccuratePythonEnvironmentInfo` when resolved data differs from the initial locator classification. The wire name is intentionally kept for PET compatibility.
+`resolve` may emit the telemetry event `InaccurateEnvironmentInfo` when resolved data differs from the initial locator classification.
 
 ## Conda Info Request
 
-Returns Conda telemetry information in a PET-compatible shape.
+Returns Conda telemetry information.
 
 _Request_:
 
@@ -333,8 +243,6 @@ interface CondaTelemetryInfo {
   condaPrefix?: string;
 }
 ```
-
-RET always includes the PET telemetry fields. It also includes additional optional fields such as `executable`, `condaVersion`, `rootPrefix`, and `condaPrefix` when that data is available.
 
 ## Clear Cache Request
 
@@ -367,29 +275,16 @@ _Notification_:
 
 ## Installation Notification
 
-Sent during `refresh` when the output schema includes native RET installations.
+Sent during `refresh` for each discovered R installation.
 
 _Notification_:
 
 - method: `installation`
 - params: `RInstallation`
 
-This notification is emitted in `ret` and `dual` modes.
-
-## Environment Notification
-
-Sent during `refresh` when the output schema includes PET-compatible environments.
-
-_Notification_:
-
-- method: `environment`
-- params: `Environment`
-
-This notification is emitted in `pet` and `dual` modes.
-
 ## Telemetry Notification
 
-Sent during `refresh`, and sometimes during `resolve`, with PET-compatible event names.
+Sent during `refresh`, and sometimes during `resolve`, with timing and diagnostic events.
 
 _Notification_:
 
@@ -402,7 +297,7 @@ type TelemetryEventName =
   | "GlobalPathVariableEnvironmentsSearchCompleted"
   | "AllSearchPathsEnvironmentsSearchCompleted"
   | "SearchCompleted"
-  | "InaccuratePythonEnvironmentInfo"
+  | "InaccurateEnvironmentInfo"
   | "RefreshPerformance";
 
 interface TelemetryParams {
@@ -416,7 +311,7 @@ interface RefreshPerformance {
   locators: Record<string, number>;
 }
 
-interface InaccuratePythonEnvironmentInfo {
+interface InaccurateEnvironmentInfo {
   kind?: RInstallationKind;
   invalidExecutable?: boolean;
   executableNotInSymlinks?: boolean;
@@ -429,5 +324,5 @@ interface InaccuratePythonEnvironmentInfo {
 Notes:
 
 - `RefreshPerformance` carries millisecond timings.
-- `InaccuratePythonEnvironmentInfo` is emitted only when resolve-time data contradicts discovery-time data.
+- `InaccurateEnvironmentInfo` is emitted only when resolve-time data contradicts discovery-time data.
 - the duration-based search completion events serialize Rust duration payloads; treat them as telemetry-only values rather than user-facing protocol data.

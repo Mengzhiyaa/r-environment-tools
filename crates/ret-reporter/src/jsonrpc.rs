@@ -5,7 +5,6 @@ use env_logger::Builder;
 use log::{trace, LevelFilter};
 use ret_core::{
     manager::EnvManager,
-    output::OutputSchema,
     r_installation::{RInstallation, RInstallationKind},
     reporter::Reporter,
     telemetry::{get_telemetry_event_name, TelemetryEvent},
@@ -15,7 +14,6 @@ use serde::{Deserialize, Serialize};
 
 pub struct JsonRpcReporter {
     report_only: Option<RInstallationKind>,
-    output_schema: OutputSchema,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -52,27 +50,12 @@ impl Reporter for JsonRpcReporter {
             }
         }
         trace!("Reporting installation {:?}", installation);
-        match self.output_schema {
-            OutputSchema::Ret => send_message("installation", installation.into()),
-            OutputSchema::Pet => {
-                send_message("environment", Some(installation.to_pet_json()));
-            }
-            OutputSchema::Dual => {
-                send_message("environment", Some(installation.to_pet_json()));
-                send_message("installation", installation.into());
-            }
-        }
+        send_message("installation", installation.into());
     }
 }
 
-pub fn create_reporter(
-    report_only: Option<RInstallationKind>,
-    output_schema: OutputSchema,
-) -> impl Reporter {
-    JsonRpcReporter {
-        report_only,
-        output_schema,
-    }
+pub fn create_reporter(report_only: Option<RInstallationKind>) -> impl Reporter {
+    JsonRpcReporter { report_only }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Eq, Clone)]

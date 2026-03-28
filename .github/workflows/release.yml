@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package Artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p release
+
+          # Linux and macOS targets → tar.gz
+          for target in x86_64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin; do
+            dir="artifacts/ret-${target}"
+            if [ -d "$dir" ]; then
+              chmod +x "${dir}/ret"
+              tar -czf "release/ret-${VERSION}-${target}.tar.gz" \
+                -C "$dir" ret
+            fi
+          done
+
+          # Windows targets → zip
+          for target in x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            dir="artifacts/ret-${target}"
+            if [ -d "$dir" ]; then
+              (cd "$dir" && zip -r "../../release/ret-${VERSION}-${target}.zip" ret.exe)
+            fi
+          done
+
+      - name: Generate Checksums
+        run: |
+          cd release
+          sha256sum * > checksums.sha256
+          echo "=== Checksums ==="
+          cat checksums.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release/*

@@ -19,7 +19,7 @@ For workspace-level documentation, see:
 - Prefer filesystem inspection over spawning external tools.
 - Resolve version and `R.home()` only when needed.
 - Report installations in a single pass once enough metadata is available.
-- Keep locator behavior close to PET so higher-level integrations stay familiar.
+- Keep locator behavior consistent so higher-level integrations stay familiar.
 
 ## Search Strategy
 

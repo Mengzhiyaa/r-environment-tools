@@ -9,12 +9,9 @@ use crate::r_installation::RInstallationKind;
 ///
 /// Emitted when a locator's initial (unresolved) discovery differs
 /// from the resolved installation details.
-///
-/// NOTE: The wire format name `InaccuratePythonEnvironmentInfo` is
-/// retained for PET-compatible telemetry consumers.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
-pub struct InaccuratePythonEnvironmentInfo {
+pub struct InaccurateEnvironmentInfo {
     pub kind: Option<RInstallationKind>,
     pub invalid_executable: Option<bool>,
     pub executable_not_in_symlinks: Option<bool>,

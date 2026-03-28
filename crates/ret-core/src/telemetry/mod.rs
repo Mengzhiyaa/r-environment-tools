@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use inaccurate_pet_environment::InaccuratePythonEnvironmentInfo;
+use inaccurate_environment::InaccurateEnvironmentInfo;
 use refresh_performance::RefreshPerformance;
 use serde::{Deserialize, Serialize};
 
-pub mod inaccurate_pet_environment;
+pub mod inaccurate_environment;
 pub mod refresh_performance;
 
 pub type NumberOfCustomSearchPaths = u32;
@@ -17,7 +17,7 @@ pub enum TelemetryEvent {
     GlobalPathVariableEnvironmentsSearchCompleted(std::time::Duration),
     AllSearchPathsEnvironmentsSearchCompleted(std::time::Duration, NumberOfCustomSearchPaths),
     SearchCompleted(std::time::Duration),
-    InaccuratePythonEnvironmentInfo(InaccuratePythonEnvironmentInfo),
+    InaccurateEnvironmentInfo(InaccurateEnvironmentInfo),
     RefreshPerformance(RefreshPerformance),
 }
 
@@ -31,7 +31,7 @@ pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
             "AllSearchPathsEnvironmentsSearchCompleted"
         }
         TelemetryEvent::SearchCompleted(_) => "SearchCompleted",
-        TelemetryEvent::InaccuratePythonEnvironmentInfo(_) => "InaccuratePythonEnvironmentInfo",
+        TelemetryEvent::InaccurateEnvironmentInfo(_) => "InaccurateEnvironmentInfo",
         TelemetryEvent::RefreshPerformance(_) => "RefreshPerformance",
     }
 }

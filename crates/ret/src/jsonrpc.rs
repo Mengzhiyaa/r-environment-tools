@@ -13,12 +13,11 @@ use lazy_static::lazy_static;
 use ret_conda::Conda;
 use ret_core::{
     os_environment::{Environment, EnvironmentApi},
-    output::OutputSchema,
     r_installation::{RInstallation, RInstallationKind},
     reporter::Reporter,
     telemetry::{
-        inaccurate_pet_environment::InaccuratePythonEnvironmentInfo,
-        refresh_performance::RefreshPerformance, TelemetryEvent,
+        inaccurate_environment::InaccurateEnvironmentInfo, refresh_performance::RefreshPerformance,
+        TelemetryEvent,
     },
     Configuration, Locator,
 };
@@ -45,7 +44,6 @@ lazy_static! {
 
 pub struct Context {
     configuration: RwLock<Configuration>,
-    output_schema: RwLock<OutputSchema>,
     conda_locator: Arc<Conda>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     os_environment: Arc<dyn Environment>,
@@ -59,7 +57,6 @@ pub fn start_jsonrpc_server() {
     let context = Context {
         locators: create_locators_with_conda(&environment, conda_locator.clone()),
         configuration: RwLock::new(Configuration::default()),
-        output_schema: RwLock::new(OutputSchema::Pet),
         conda_locator,
         os_environment: Arc::new(environment),
     };
@@ -84,12 +81,7 @@ pub struct ConfigureOptions {
     pub executables: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub rig_executable: Option<PathBuf>,
-    // PET-compatible: accepted during deserialization but ignored by RET.
-    pub pipenv_executable: Option<PathBuf>,
-    // PET-compatible: accepted during deserialization but ignored by RET.
-    pub poetry_executable: Option<PathBuf>,
     pub cache_directory: Option<PathBuf>,
-    pub output_schema: Option<OutputSchema>,
 }
 
 pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
@@ -116,15 +108,9 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 configuration.executables = executables;
                 configuration.conda_executable = configure_options.conda_executable.clone();
                 configuration.rig_executable = configure_options.rig_executable.clone();
-                configuration.output_schema = configure_options
-                    .output_schema
-                    .unwrap_or(*context.output_schema.read().unwrap());
                 if let Some(cache_directory) = configure_options.cache_directory {
                     set_cache_directory(cache_directory.clone());
                     configuration.cache_directory = Some(cache_directory);
-                }
-                if let Some(output_schema) = configure_options.output_schema {
-                    *context.output_schema.write().unwrap() = output_schema;
                 }
                 let config = configuration.clone();
                 drop(configuration);
@@ -178,14 +164,12 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             thread::spawn(move || {
                 let _lock = REFRESH_LOCK.lock().expect("refresh lock poisoned");
                 let config = context.configuration.read().unwrap().clone();
-                let output_schema = *context.output_schema.read().unwrap();
                 let report_only = refresh_options
                     .search_kind
                     .as_deref()
                     .and_then(parse_search_kind);
                 let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
                     report_only,
-                    output_schema,
                 ))));
 
                 let (config, search_scope) = build_refresh_config(&refresh_options, config);
@@ -234,7 +218,6 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
         Ok(find_options) => {
             thread::spawn(move || {
                 let config = context.configuration.read().unwrap().clone();
-                let output_schema = *context.output_schema.read().unwrap();
                 for locator in context.locators.iter() {
                     locator.configure(&config);
                 }
@@ -263,7 +246,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                     .lock()
                     .expect("installations mutex poisoned")
                     .clone();
-                let payload = build_find_response(installations, output_schema);
+                let payload = build_find_response(installations);
                 send_reply(id, payload);
             });
         }
@@ -286,7 +269,6 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
         Ok(resolve_options) => {
             thread::spawn(move || {
                 let configuration = context.configuration.read().unwrap().clone();
-                let output_schema = *context.output_schema.read().unwrap();
                 for locator in context.locators.iter() {
                     locator.configure(&configuration);
                 }
@@ -299,12 +281,12 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                 .map(|result| {
                     if let Some(resolved) = result.resolved {
                         if let Some(inaccuracy) =
-                            detect_inaccurate_pet_environment(&result.discovered, &resolved)
+                            detect_inaccurate_environment(&result.discovered, &resolved)
                         {
-                            let reporter = jsonrpc::create_reporter(None, output_schema);
-                            reporter.report_telemetry(
-                                &TelemetryEvent::InaccuratePythonEnvironmentInfo(inaccuracy),
-                            );
+                            let reporter = jsonrpc::create_reporter(None);
+                            reporter.report_telemetry(&TelemetryEvent::InaccurateEnvironmentInfo(
+                                inaccuracy,
+                            ));
                         }
                         resolved
                     } else {
@@ -313,7 +295,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                 });
                 match result {
                     Some(installation) => {
-                        let result = build_resolve_output(installation, output_schema);
+                        let result = build_resolve_output(installation);
                         send_reply(id, Some(result));
                     }
                     None => send_error(
@@ -412,39 +394,14 @@ fn expand_configured_directories(paths: &Option<Vec<PathBuf>>) -> Option<Vec<Pat
 }
 
 fn parse_search_kind(kind: &str) -> Option<RInstallationKind> {
-    // Accept both RET-native and PET-compatible kind names.
-    serde_json::from_value::<RInstallationKind>(json!(kind))
-        .ok()
-        .or_else(|| match kind {
-            // PET-compatible aliases
-            "MacPythonOrg" => Some(RInstallationKind::MacFramework),
-            "GlobalPaths" => Some(RInstallationKind::GlobalPaths),
-            _ => None,
-        })
+    serde_json::from_value::<RInstallationKind>(json!(kind)).ok()
 }
 
-fn build_find_response(
-    installations: Vec<RInstallation>,
-    output_schema: OutputSchema,
-) -> Option<Value> {
+fn build_find_response(installations: Vec<RInstallation>) -> Option<Value> {
     if installations.is_empty() {
         return None;
     }
-
-    Some(match output_schema {
-        OutputSchema::Ret => json!(installations),
-        OutputSchema::Pet => {
-            let environments: Vec<Value> = installations.iter().map(|i| i.to_pet_json()).collect();
-            json!(environments)
-        }
-        OutputSchema::Dual => {
-            let environments: Vec<Value> = installations.iter().map(|i| i.to_pet_json()).collect();
-            json!({
-                "installations": installations,
-                "environments": environments,
-            })
-        }
-    })
+    Some(json!(installations))
 }
 
 fn emit_refresh_telemetry(
@@ -519,10 +476,10 @@ fn count_configured_search_paths(config: &Configuration) -> u32 {
     .sum::<usize>() as u32
 }
 
-fn detect_inaccurate_pet_environment(
+fn detect_inaccurate_environment(
     discovered: &RInstallation,
     resolved: &RInstallation,
-) -> Option<InaccuratePythonEnvironmentInfo> {
+) -> Option<InaccurateEnvironmentInfo> {
     let invalid_executable = discovered
         .executable
         .as_ref()
@@ -543,7 +500,7 @@ fn detect_inaccurate_pet_environment(
         .arch
         .as_ref()
         .map(|_| discovered.arch != resolved.arch);
-    let inaccuracy = InaccuratePythonEnvironmentInfo {
+    let inaccuracy = InaccurateEnvironmentInfo {
         kind: resolved.kind.or(discovered.kind),
         invalid_executable,
         executable_not_in_symlinks,
@@ -572,23 +529,22 @@ fn detect_inaccurate_pet_environment(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_find_response, count_configured_search_paths, detect_inaccurate_pet_environment,
+        build_find_response, count_configured_search_paths, detect_inaccurate_environment,
         parse_search_kind, RefreshOptions,
     };
     use crate::find::SearchScope;
     use ret_core::{
         arch::Architecture,
-        output::OutputSchema,
         r_installation::{RInstallationBuilder, RInstallationKind},
         Configuration,
     };
     use std::path::PathBuf;
 
     #[test]
-    fn parses_pet_search_kind_into_r_kind() {
+    fn parses_search_kind_into_r_kind() {
         assert_eq!(parse_search_kind("Conda"), Some(RInstallationKind::Conda));
         assert_eq!(
-            parse_search_kind("MacPythonOrg"),
+            parse_search_kind("MacFramework"),
             Some(RInstallationKind::MacFramework)
         );
         assert_eq!(
@@ -596,6 +552,8 @@ mod tests {
             Some(RInstallationKind::WindowsRegistry)
         );
         assert_eq!(parse_search_kind("Poetry"), None);
+        // PET aliases no longer accepted
+        assert_eq!(parse_search_kind("MacPythonOrg"), None);
     }
 
     #[test]
@@ -629,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn build_find_response_uses_pet_array_shape() {
+    fn build_find_response_uses_ret_array_shape() {
         let installation = RInstallationBuilder::new(Some(RInstallationKind::Conda))
             .executable(Some(PathBuf::from("/tmp/R/bin/R")))
             .home(Some(PathBuf::from("/tmp/R")))
@@ -637,15 +595,13 @@ mod tests {
             .arch(Some(Architecture::X64))
             .build();
 
-        let value =
-            build_find_response(vec![installation], OutputSchema::Pet).expect("expected payload");
-        let items = value.as_array().expect("pet response should be an array");
+        let value = build_find_response(vec![installation]).expect("expected payload");
+        let items = value.as_array().expect("response should be an array");
         assert_eq!(items.len(), 1);
-        // norm_case may change the path on Windows (e.g. /tmp/R -> D:\tmp\R)
-        let expected_prefix = ret_fs::path::norm_case(PathBuf::from("/tmp/R"));
+        let expected_home = ret_fs::path::norm_case(PathBuf::from("/tmp/R"));
         assert_eq!(
-            items[0]["prefix"],
-            expected_prefix.to_string_lossy().to_string()
+            items[0]["home"],
+            expected_home.to_string_lossy().to_string()
         );
         assert_eq!(items[0]["kind"], "Conda");
     }
@@ -667,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_inaccurate_pet_environment_reports_prefix_mismatch() {
+    fn detect_inaccurate_environment_reports_prefix_mismatch() {
         let discovered = RInstallationBuilder::new(Some(RInstallationKind::GlobalPaths))
             .executable(Some(PathBuf::from("/tmp/discovered/bin/R")))
             .home(Some(PathBuf::from("/tmp/discovered")))
@@ -679,7 +635,7 @@ mod tests {
             .build();
 
         let inaccuracy =
-            detect_inaccurate_pet_environment(&discovered, &resolved).expect("expected telemetry");
+            detect_inaccurate_environment(&discovered, &resolved).expect("expected telemetry");
         assert_eq!(inaccuracy.kind, Some(RInstallationKind::GlobalPaths));
         assert_eq!(inaccuracy.invalid_prefix, Some(true));
         assert_eq!(inaccuracy.invalid_executable, Some(false));

@@ -5,7 +5,6 @@ use clap::{Parser, ValueEnum};
 use log::error;
 use ret_fs::path::norm_case;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::{arch::Architecture, manager::EnvManager};
@@ -124,25 +123,6 @@ impl std::fmt::Display for RInstallation {
 }
 
 impl RInstallation {
-    /// Produce PET-compatible JSON representation.
-    ///
-    /// Maps `home` → `prefix` and `RInstallationKind` → PET kind strings
-    /// so the output is schema-compatible with PET's `PythonEnvironment`.
-    pub fn to_pet_json(&self) -> Value {
-        json!({
-            "displayName": self.display_name,
-            "name": self.name,
-            "executable": self.executable,
-            "kind": self.kind.and_then(|k| k.to_pet_kind_str()),
-            "version": self.version,
-            "prefix": self.home,
-            "manager": self.manager,
-            "arch": self.arch,
-            "symlinks": self.symlinks,
-            "error": self.error,
-        })
-    }
-
     /// Returns a key suitable for deduplicating installations.
     pub fn get_environment_key(&self) -> Option<PathBuf> {
         if let Some(exe) = &self.executable {
@@ -156,33 +136,6 @@ impl RInstallation {
             );
             None
         }
-    }
-}
-
-impl RInstallationKind {
-    /// Maps to PET-compatible kind string for wire format.
-    ///
-    /// R-specific managers (Rig, MacPorts, Scoop, Nix) map to `"GlobalPaths"`
-    /// because PET has no equivalent. `MacFramework` maps to `"MacPythonOrg"`.
-    pub fn to_pet_kind_str(&self) -> Option<&'static str> {
-        Some(match self {
-            RInstallationKind::Conda => "Conda",
-            RInstallationKind::Homebrew => "Homebrew",
-            RInstallationKind::LinuxGlobal => "LinuxGlobal",
-            RInstallationKind::MacFramework => "MacPythonOrg",
-            // Lossy: no PET equivalent for these R-specific managers
-            RInstallationKind::Chocolatey
-            | RInstallationKind::EnvironmentModule
-            | RInstallationKind::Guix
-            | RInstallationKind::MacPorts
-            | RInstallationKind::Nix
-            | RInstallationKind::Pixi
-            | RInstallationKind::Rig
-            | RInstallationKind::Scoop
-            | RInstallationKind::Spack
-            | RInstallationKind::GlobalPaths => "GlobalPaths",
-            RInstallationKind::WindowsHq | RInstallationKind::WindowsRegistry => "WindowsRegistry",
-        })
     }
 }
 

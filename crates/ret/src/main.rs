@@ -8,7 +8,7 @@ use ret::{
     find_and_report_installations_stdio, jsonrpc::start_jsonrpc_server, resolve_report_stdio,
     FindOptions,
 };
-use ret_core::{output::OutputSchema, r_installation::RInstallationKind};
+use ret_core::r_installation::RInstallationKind;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -52,10 +52,6 @@ enum Commands {
         /// Path to the conda, mamba, or micromamba executable.
         #[arg(long, env = "RET_CONDA_EXECUTABLE")]
         conda_executable: Option<PathBuf>,
-
-        /// JSON output schema.
-        #[arg(long, env = "RET_OUTPUT_SCHEMA", default_value = "ret")]
-        output_schema: OutputSchema,
     },
     /// Resolves a single R installation from an executable or home directory.
     Resolve {
@@ -74,10 +70,6 @@ enum Commands {
         /// Output results as JSON.
         #[arg(short, long)]
         json: bool,
-
-        /// JSON output schema.
-        #[arg(long, env = "RET_OUTPUT_SCHEMA", default_value = "ret")]
-        output_schema: OutputSchema,
     },
     /// Starts the JSON-RPC server.
     Server,
@@ -95,7 +87,6 @@ fn main() {
         json: false,
         rig_executable: None,
         conda_executable: None,
-        output_schema: OutputSchema::Ret,
     }) {
         Commands::Find {
             list,
@@ -106,7 +97,6 @@ fn main() {
             json,
             rig_executable,
             conda_executable,
-            output_schema,
         } => {
             find_and_report_installations_stdio(FindOptions {
                 print_list: list,
@@ -118,7 +108,6 @@ fn main() {
                 json,
                 rig_executable,
                 conda_executable,
-                output_schema,
             });
         }
         Commands::Resolve {
@@ -126,8 +115,7 @@ fn main() {
             cache_directory,
             verbose,
             json,
-            output_schema,
-        } => resolve_report_stdio(executable, verbose, cache_directory, json, output_schema),
+        } => resolve_report_stdio(executable, verbose, cache_directory, json),
         Commands::Server => start_jsonrpc_server(),
     }
 }

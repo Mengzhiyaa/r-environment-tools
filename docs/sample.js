@@ -18,7 +18,6 @@ const RET_EXE = path.join(
   process.platform === "win32" ? "ret.exe" : "ret"
 );
 
-const environments = [];
 const installations = [];
 const managers = [];
 
@@ -53,10 +52,6 @@ function handleNotifications(connection) {
     console.log(`Discovered Manager (${manager.tool}) ${manager.executable}`);
   });
 
-  connection.onNotification("environment", (environment) => {
-    environments.push(environment);
-  });
-
   connection.onNotification("installation", (installation) => {
     installations.push(installation);
   });
@@ -73,8 +68,6 @@ async function configure(connection) {
   const cacheDirectory = path.join(process.cwd(), "temp", "ret-cache");
 
   await connection.sendRequest("configure", {
-    // JSON-RPC defaults to "pet", but making this explicit keeps the sample clear.
-    outputSchema: "pet",
     workspaceDirectories: [process.cwd()],
     environmentDirectories: [],
     cacheDirectory,
@@ -86,12 +79,11 @@ async function configure(connection) {
  * @param {undefined | { searchKind?: string } | { searchPaths?: string[] }} search
  */
 async function refresh(connection, search) {
-  environments.length = 0;
   installations.length = 0;
   managers.length = 0;
 
   const { duration } = await connection.sendRequest("refresh", search);
-  const count = environments.length || installations.length;
+  const count = installations.length;
   const scope = search
     ? ` (in ${JSON.stringify(search)})`
     : " (using configured search roots)";
@@ -105,11 +97,7 @@ async function refresh(connection, search) {
  */
 async function find(connection, searchPath) {
   const result = await connection.sendRequest("find", { searchPath });
-  const count = Array.isArray(result)
-    ? result.length
-    : result && Array.isArray(result.installations)
-      ? result.installations.length
-      : 0;
+  const count = Array.isArray(result) ? result.length : 0;
 
   console.log(`Find returned ${count} installation(s)`);
   return result;
@@ -122,9 +110,8 @@ async function find(connection, searchPath) {
 async function resolve(connection, executable) {
   try {
     const result = await connection.sendRequest("resolve", { executable });
-    const installation = result.installation || result;
     console.log(
-      `Resolved (${installation.kind}, ${installation.version}) ${installation.executable}`
+      `Resolved (${result.kind}, ${result.version}) ${result.executable}`
     );
     return result;
   } catch (ex) {
