@@ -1,0 +1,11 @@
+[package]
+name = "ret-homebrew"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ret-core = { path = "../ret-core" }
+ret-fs = { path = "../ret-fs" }
+ret-r-utils = { path = "../ret-r-utils" }
+log = "0.4.21"

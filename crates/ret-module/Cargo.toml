@@ -1,0 +1,10 @@
+[package]
+name = "ret-module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ret-core = { path = "../ret-core" }
+ret-r-utils = { path = "../ret-r-utils" }
+log = "0.4.21"

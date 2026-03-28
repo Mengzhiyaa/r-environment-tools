@@ -1,0 +1,10 @@
+[package]
+name = "ret-mac-framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ret-core = { path = "../ret-core" }
+ret-fs = { path = "../ret-fs" }
+ret-r-utils = { path = "../ret-r-utils" }

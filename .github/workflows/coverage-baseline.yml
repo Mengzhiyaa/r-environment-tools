@@ -1,0 +1,81 @@
+name: Coverage Baseline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Coverage Baseline
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        working-directory: r-environment-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Install R ──
+      - name: Install R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+
+      # ── Install Conda ──
+      - name: Add Conda to PATH (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Add Conda to PATH (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Check Conda version
+        run: conda info --all
+
+      - name: Create Conda R environment
+        run: conda create -n r-conda-env r-base -c conda-forge -y
+        shell: bash
+
+      # ── Build & Coverage ──
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Run Tests with Coverage
+        run: cargo llvm-cov --features ci --lcov --output-path lcov.info -- --nocapture --test-threads=1
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: trace
+        shell: bash
+
+      - name: Upload Coverage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-baseline-${{ matrix.os }}
+          path: r-environment-tools/lcov.info
+          retention-days: 90

@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    defaults:
+      run:
+        working-directory: r-environment-tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+
+      - name: Build Release
+        run: cargo build --frozen --release --target ${{ matrix.target }}
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ret-${{ matrix.target }}
+          path: r-environment-tools/target/${{ matrix.target }}/release/ret${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
+          retention-days: 1

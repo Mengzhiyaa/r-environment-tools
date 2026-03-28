@@ -1,0 +1,21 @@
+[package]
+name = "ret-r-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
+[dependencies]
+lazy_static = "1.4.0"
+regex = "1.10.4"
+ret-fs = { path = "../ret-fs" }
+ret-core = { path = "../ret-core" }
+serde = { version = "1.0.152", features = ["derive"] }
+log = "0.4.21"
+serde_json = "1.0.93"
+sha2 = "0.10.6"
+
+[dev-dependencies]
+tempfile = "3.13.0"

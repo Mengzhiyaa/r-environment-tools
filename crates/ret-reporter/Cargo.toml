@@ -1,0 +1,15 @@
+[package]
+name = "ret-reporter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
+[dependencies]
+ret-core = { path = "../ret-core" }
+ret-jsonrpc = { path = "../ret-jsonrpc" }
+log = "0.4.21"
+env_logger = "0.10.2"
+serde = { version = "1.0.152", features = ["derive"] }

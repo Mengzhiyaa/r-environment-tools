@@ -1,0 +1,51 @@
+[package]
+name = "ret"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
+
+[dependencies]
+ret-core = { path = "../ret-core" }
+ret-chocolatey = { path = "../ret-chocolatey" }
+ret-conda = { path = "../ret-conda" }
+ret-guix = { path = "../ret-guix" }
+ret-jsonrpc = { path = "../ret-jsonrpc" }
+ret-fs = { path = "../ret-fs" }
+ret-r-utils = { path = "../ret-r-utils" }
+ret-reporter = { path = "../ret-reporter" }
+ret-homebrew = { path = "../ret-homebrew" }
+ret-linux-global-r = { path = "../ret-linux-global-r" }
+ret-mac-framework = { path = "../ret-mac-framework" }
+ret-macports = { path = "../ret-macports" }
+ret-module = { path = "../ret-module" }
+ret-nix = { path = "../ret-nix" }
+ret-pixi = { path = "../ret-pixi" }
+ret-rig = { path = "../ret-rig" }
+ret-scoop = { path = "../ret-scoop" }
+ret-spack = { path = "../ret-spack" }
+ret-windows-hq = { path = "../ret-windows-hq" }
+ret-windows-registry = { path = "../ret-windows-registry" }
+log = "0.4.21"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4.5.4", features = ["derive", "cargo", "env"] }
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
+lazy_static = "1.4.0"
+
+[dev-dependencies]
+tempfile = "3.13.0"
+serde_json = "1.0.93"
+env_logger = "0.10.0"
+log = "0.4.21"
+
+[features]
+ci = []
+ci-homebrew-container = []
+
