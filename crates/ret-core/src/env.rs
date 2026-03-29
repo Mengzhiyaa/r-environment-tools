@@ -14,7 +14,9 @@ pub struct REnv {
     pub home: Option<PathBuf>,
     /// Version of the R installation.
     pub version: Option<String>,
-    /// Known symlinks or alternative executables (for example `Rscript`).
+    /// Known executable entrypoints for the installation (for example `Rscript`).
+    pub known_executables: Option<Vec<PathBuf>>,
+    /// Known executable entrypoints that are real symlinks on disk.
     pub symlinks: Option<Vec<PathBuf>>,
     /// Architecture of the R installation (e.g. from `R.version$arch`).
     pub arch: Option<Architecture>,
@@ -29,6 +31,7 @@ impl REnv {
             executable,
             home,
             version,
+            known_executables: None,
             symlinks: None,
             arch: None,
         }

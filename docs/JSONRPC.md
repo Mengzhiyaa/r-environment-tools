@@ -9,7 +9,7 @@ RET communicates over stdio using JSON-RPC 2.0 messages.
 ## Common Types
 
 ```typescript
-type Architecture = "arm64" | "x64" | "x86";
+type Architecture = "arm64" | "x86_64" | "x86";
 
 enum RInstallationKind {
   Chocolatey,
@@ -51,6 +51,34 @@ interface Manager {
   tool: EnvManagerType;
 }
 
+type DiscoverySource = "locator" | "globalPaths" | "explicitSearch" | "rVersions";
+
+type LocatorMetadata =
+  | {
+      type: "conda";
+      environmentPath: string;
+    }
+  | {
+      type: "pixi";
+      environmentPath: string;
+      manifestPath?: string;
+      environmentName?: string;
+    }
+  | {
+      type: "module";
+      moduleName: string;
+      startupCommand: string;
+    };
+
+interface RVersionsOverlay {
+  label?: string;
+  script?: string;
+  repo?: string;
+  library?: string;
+  module?: string;
+  moduleStartupCommand?: string;
+}
+
 interface RInstallation {
   displayName?: string;
   name?: string;
@@ -60,8 +88,98 @@ interface RInstallation {
   home?: string;
   manager?: Manager;
   arch?: Architecture;
+  scriptPath?: string;
+  orthogonal?: boolean;
+  knownExecutables?: string[];
   symlinks?: string[];
+  discoveredBy?: DiscoverySource[];
+  locatorMetadata?: LocatorMetadata;
+  rversionsOverlay?: RVersionsOverlay;
+  startupCommand?: string;
+  environmentVariables?: Record<string, string>;
   error?: string;
+}
+```
+
+## Example Installation Payloads
+
+```json
+{
+  "executable": "/home/mzy/miniforge3/envs/R/bin/R",
+  "home": "/home/mzy/miniforge3/envs/R/lib/R",
+  "version": "4.5.3",
+  "arch": "x86_64",
+  "scriptPath": "/home/mzy/miniforge3/envs/R/bin/Rscript",
+  "startupCommand": "conda activate /home/mzy/miniforge3/envs/R",
+  "environmentVariables": {
+    "R_LIBS": "/opt/R-libs/production"
+  },
+  "kind": "Conda",
+  "discoveredBy": ["locator", "rVersions"],
+  "locatorMetadata": {
+    "type": "conda",
+    "environmentPath": "/home/mzy/miniforge3/envs/R"
+  },
+  "rversionsOverlay": {
+    "label": "Production R",
+    "repo": "https://ppm.example.com/cran/latest",
+    "library": "/opt/R-libs/production"
+  },
+  "displayName": "Production R"
+}
+```
+
+```json
+{
+  "executable": "/opt/modules/R/4.3.0/bin/R",
+  "home": "/opt/modules/R/4.3.0/lib/R",
+  "version": "4.3.0",
+  "arch": "x86_64",
+  "scriptPath": "/opt/modules/R/4.3.0/bin/Rscript",
+  "startupCommand": "eval $(/usr/bin/modulecmd sh load R/4.3.0)",
+  "kind": "EnvironmentModule",
+  "discoveredBy": ["locator"],
+  "locatorMetadata": {
+    "type": "module",
+    "moduleName": "R/4.3.0",
+    "startupCommand": "eval $(/usr/bin/modulecmd sh load R/4.3.0)"
+  }
+}
+```
+
+```json
+{
+  "executable": "/home/user/project/.pixi/envs/default/bin/R",
+  "home": "/home/user/project/.pixi/envs/default/lib/R",
+  "version": "4.3.3",
+  "arch": "x86_64",
+  "scriptPath": "/home/user/project/.pixi/envs/default/bin/Rscript",
+  "startupCommand": null,
+  "environmentVariables": null,
+  "kind": "Pixi",
+  "discoveredBy": ["locator"],
+  "locatorMetadata": {
+    "type": "pixi",
+    "environmentPath": "/home/user/project/.pixi/envs/default",
+    "manifestPath": "/home/user/project/pixi.toml",
+    "environmentName": "default"
+  }
+}
+```
+
+```json
+{
+  "executable": "/opt/R/4.4.1/bin/R",
+  "home": "/opt/R/4.4.1/lib/R",
+  "version": "4.4.1",
+  "arch": "x86_64",
+  "scriptPath": "/opt/R/4.4.1/bin/Rscript",
+  "startupCommand": null,
+  "environmentVariables": null,
+  "kind": "LinuxGlobal",
+  "discoveredBy": ["locator", "globalPaths"],
+  "locatorMetadata": null,
+  "rversionsOverlay": null
 }
 ```
 

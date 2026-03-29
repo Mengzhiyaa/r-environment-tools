@@ -63,11 +63,12 @@ fn resolved_installation_uses_reported_home_and_version() {
     assert_eq!(installation.executable, fake.executable);
     assert_eq!(installation.home, fake.home);
     assert_eq!(installation.version, "4.4.0");
-    assert_eq!(installation.arch.to_string(), "x64");
+    assert_eq!(installation.arch.to_string(), "x86_64");
     assert!(installation
-        .symlinks
+        .known_executables
         .unwrap_or_default()
         .contains(&fake.executable));
+    assert!(installation.symlinks.unwrap_or_default().is_empty());
 }
 
 #[test]

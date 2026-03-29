@@ -226,21 +226,12 @@ fn find_installations_json(
     environment: &dyn Environment,
     search_scope: Option<SearchScope>,
 ) {
-    let collect_reporter = Arc::new(collect::create_reporter());
-    let reporter = CacheReporter::new(collect_reporter.clone());
+    let reporter = CacheReporter::new(Arc::new(collect::create_reporter()));
 
     find_and_report_installations(&reporter, config, locators, environment, search_scope);
 
-    let managers = collect_reporter
-        .managers
-        .lock()
-        .expect("managers mutex poisoned")
-        .clone();
-    let mut installations = collect_reporter
-        .installations
-        .lock()
-        .expect("installations mutex poisoned")
-        .clone();
+    let managers = reporter.get_managers();
+    let mut installations = reporter.get_installations();
 
     if let Some(kind) = options.kind {
         installations.retain(|installation| installation.kind == Some(kind));

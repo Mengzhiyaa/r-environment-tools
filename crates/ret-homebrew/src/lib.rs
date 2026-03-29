@@ -12,7 +12,10 @@ use ret_core::{
     Configuration, Locator, LocatorKind,
 };
 use ret_fs::path::resolve_symlink;
-use ret_r_utils::{env::ResolvedRInstallation, executable::find_executables};
+use ret_r_utils::{
+    env::ResolvedRInstallation,
+    executable::{filter_symlink_paths, find_executables},
+};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -33,13 +36,16 @@ impl Homebrew {
     }
 
     fn insert_and_report(&self, installation: RInstallation, reporter: Option<&dyn Reporter>) {
-        let mut entries = vec![];
-        if let Some(executable) = installation.executable.clone() {
-            entries.push((executable, installation.clone()));
-        }
-        if let Some(symlinks) = &installation.symlinks {
-            for symlink in symlinks {
-                entries.push((symlink.clone(), installation.clone()));
+        let mut entries = installation
+            .known_executables
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|executable| (executable, installation.clone()))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            if let Some(executable) = installation.executable.clone() {
+                entries.push((executable, installation.clone()));
             }
         }
         self.reported_executables.insert_many(entries);
@@ -75,11 +81,17 @@ impl Locator for Homebrew {
             return None;
         }
 
-        let symlinks = env.symlinks.clone().or_else(|| {
-            let mut symlinks = find_executables(home.join("bin"));
-            symlinks.push(env.executable.clone());
-            Some(symlinks)
-        });
+        let extra_executables = if env.known_executables.is_none() {
+            let mut executables = find_executables(home.join("bin"));
+            executables.push(env.executable.clone());
+            executables
+        } else {
+            Vec::new()
+        };
+        let mut symlinks = env.symlinks.clone().unwrap_or_default();
+        symlinks.extend(filter_symlink_paths(extra_executables.clone()));
+        let mut known_executables = env.known_executables.clone().unwrap_or_default();
+        known_executables.extend(extra_executables);
 
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Homebrew))
@@ -93,7 +105,8 @@ impl Locator for Homebrew {
                         .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
                 )
                 .manager(self.manager.clone())
-                .symlinks(symlinks)
+                .known_executables(Some(known_executables))
+                .symlinks(Some(symlinks))
                 .build(),
         )
     }

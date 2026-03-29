@@ -76,6 +76,7 @@ impl Locator for Rig {
                         .clone()
                         .map(|path| EnvManager::new(path, EnvManagerType::Rig, None)),
                 )
+                .known_executables(env.known_executables.clone())
                 .symlinks(env.symlinks.clone())
                 .build(),
         )

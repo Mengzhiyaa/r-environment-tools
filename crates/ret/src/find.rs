@@ -3,7 +3,10 @@
 
 use log::warn;
 use ret_core::{
-    env::REnv, os_environment::Environment, r_installation::RInstallationKind, reporter::Reporter,
+    env::REnv,
+    os_environment::Environment,
+    r_installation::{DiscoverySource, RInstallationBuilder, RInstallationKind},
+    reporter::Reporter,
     Configuration, Locator, LocatorKind,
 };
 use ret_r_utils::executable::{
@@ -111,6 +114,7 @@ pub fn find_and_report_installations(
                     locators,
                     false,
                     &global_search_paths,
+                    DiscoverySource::GlobalPaths,
                 );
             }
             summary_for_path
@@ -152,6 +156,7 @@ pub fn find_and_report_installations(
                     locators,
                     reporter,
                     &global_search_paths,
+                    Some(DiscoverySource::ExplicitSearch),
                 );
             }
             summary_for_explicit
@@ -201,6 +206,7 @@ pub fn find_r_installations_in_directory_recursive(
         locators,
         true,
         global_search_paths,
+        DiscoverySource::ExplicitSearch,
     );
 
     // If this is a conda or pixi env folder itself, do not recurse further.
@@ -222,6 +228,7 @@ pub fn find_r_installations_in_directory_recursive(
             locators,
             true,
             global_search_paths,
+            DiscoverySource::ExplicitSearch,
         );
     }
 }
@@ -232,6 +239,7 @@ fn find_r_installations_in_paths(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     explicit_search: bool,
     global_search_paths: &[PathBuf],
+    discovery_source: DiscoverySource,
 ) {
     if paths.is_empty() {
         return;
@@ -252,6 +260,7 @@ fn find_r_installations_in_paths(
                     &locators,
                     reporter,
                     global_search_paths,
+                    Some(discovery_source),
                 );
             });
         }
@@ -264,12 +273,20 @@ pub fn identify_r_executables_using_locators(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
     global_search_paths: &[PathBuf],
+    discovery_source: Option<DiscoverySource>,
 ) {
     for executable in executables {
         let raw_env = REnv::new(executable.clone(), None, None);
         if let Some(installation) =
             identify_r_installation_using_locators(&raw_env, locators, global_search_paths)
         {
+            let installation = if let Some(discovery_source) = discovery_source {
+                RInstallationBuilder::from_installation(installation)
+                    .add_discovery_source(discovery_source)
+                    .build()
+            } else {
+                installation
+            };
             if let Some(manager) = &installation.manager {
                 reporter.report_manager(manager);
             }

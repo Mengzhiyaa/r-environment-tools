@@ -63,6 +63,7 @@ impl Locator for WindowsRegistry {
                         .clone()
                         .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
                 )
+                .known_executables(env.known_executables.clone())
                 .symlinks(env.symlinks.clone())
                 .build(),
         )

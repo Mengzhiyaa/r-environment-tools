@@ -122,7 +122,7 @@ fn find_json_reports_fake_installation() {
         fake.executable.to_string_lossy().as_ref()
     );
     assert_eq!(installation["version"], "4.4.1");
-    assert_eq!(installation["arch"], "x64");
+    assert_eq!(installation["arch"], "x86_64");
 }
 
 #[test]

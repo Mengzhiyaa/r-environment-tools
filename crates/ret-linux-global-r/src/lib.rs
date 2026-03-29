@@ -132,6 +132,7 @@ impl Locator for LinuxGlobalR {
                     .home(env.home.clone())
                     .version(env.version.clone())
                     .arch(Some(arch))
+                    .known_executables(env.known_executables.clone())
                     .symlinks(env.symlinks.clone())
                     .build(),
             )
@@ -165,15 +166,20 @@ fn find_and_report_global_r_in(
                 .home(env.home.clone())
                 .version(env.version.clone())
                 .arch(Some(resolved.arch.clone()))
+                .known_executables(env.known_executables.clone())
                 .symlinks(env.symlinks.clone())
                 .build();
             resolved.add_to_cache(installation.clone());
 
-            let mut entries = vec![(env.executable.clone(), installation.clone())];
-            if let Some(symlinks) = &installation.symlinks {
-                for symlink in symlinks {
-                    entries.push((symlink.clone(), installation.clone()));
-                }
+            let mut entries = installation
+                .known_executables
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|executable| (executable, installation.clone()))
+                .collect::<Vec<_>>();
+            if entries.is_empty() {
+                entries.push((env.executable.clone(), installation.clone()));
             }
             reported_executables.insert_many(entries);
 

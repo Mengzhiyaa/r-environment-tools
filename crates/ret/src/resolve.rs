@@ -44,16 +44,21 @@ pub fn resolve_installation(
             let resolved_base = identify_installation_without_resolution(&resolved_env, locators)
                 .unwrap_or_else(|| discovered.clone());
             let mut symlinks = resolved_base.symlinks.clone().unwrap_or_default();
-            symlinks.push(info.executable.clone());
             symlinks.append(&mut info.symlinks.clone().unwrap_or_default());
             symlinks.sort();
             symlinks.dedup();
+            let mut known_executables = resolved_base.known_executables.clone().unwrap_or_default();
+            known_executables.push(info.executable.clone());
+            known_executables.append(&mut info.known_executables.clone().unwrap_or_default());
+            known_executables.sort();
+            known_executables.dedup();
 
             let resolved = RInstallationBuilder::from_installation(resolved_base)
                 .executable(Some(info.executable.clone()))
                 .home(Some(info.home.clone()))
                 .version(Some(info.version.clone()))
                 .arch(Some(info.arch.clone()))
+                .known_executables(Some(known_executables))
                 .symlinks(Some(symlinks))
                 .build();
 
@@ -79,7 +84,7 @@ fn identify_installation_without_resolution(
     env: &REnv,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
 ) -> Option<RInstallation> {
-    locators.iter().find_map(|locator| locator.try_from(env))
+    crate::locators::identify_installation_without_resolution(env, locators)
 }
 
 fn create_unknown_installation_from_raw(
@@ -89,6 +94,7 @@ fn create_unknown_installation_from_raw(
     RInstallationBuilder::new(infer_fallback_kind(&env.executable, global_search_paths))
         .executable(Some(env.executable.clone()))
         .home(infer_home_from_executable(&env.executable))
+        .known_executables(env.known_executables.clone())
         .symlinks(env.symlinks.clone())
         .build()
 }

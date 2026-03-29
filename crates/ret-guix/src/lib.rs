@@ -9,7 +9,10 @@ use ret_core::{
     Locator, LocatorKind,
 };
 use ret_fs::path::resolve_any_symlink;
-use ret_r_utils::{env::ResolvedRInstallation, executable::find_executables};
+use ret_r_utils::{
+    env::ResolvedRInstallation,
+    executable::{filter_symlink_paths, find_executables},
+};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -32,13 +35,16 @@ impl Guix {
     }
 
     fn insert_and_report(&self, installation: RInstallation, reporter: Option<&dyn Reporter>) {
-        let mut entries = vec![];
-        if let Some(executable) = installation.executable.clone() {
-            entries.push((executable, installation.clone()));
-        }
-        if let Some(symlinks) = &installation.symlinks {
-            for symlink in symlinks {
-                entries.push((symlink.clone(), installation.clone()));
+        let mut entries = installation
+            .known_executables
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|executable| (executable, installation.clone()))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            if let Some(executable) = installation.executable.clone() {
+                entries.push((executable, installation.clone()));
             }
         }
         self.reported_executables.insert_many(entries);
@@ -78,12 +84,14 @@ impl Locator for Guix {
             return None;
         }
 
-        let mut symlinks = env.symlinks.clone().unwrap_or_default();
-        symlinks.push(env.executable.clone());
-        symlinks.push(resolved_executable.clone());
+        let mut extra_executables = vec![env.executable.clone(), resolved_executable.clone()];
         if let Some(parent) = env.executable.parent() {
-            symlinks.extend(find_executables(parent));
+            extra_executables.extend(find_executables(parent));
         }
+        let mut symlinks = env.symlinks.clone().unwrap_or_default();
+        symlinks.extend(filter_symlink_paths(extra_executables.clone()));
+        let mut known_executables = env.known_executables.clone().unwrap_or_default();
+        known_executables.extend(extra_executables);
 
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Guix))
@@ -97,6 +105,7 @@ impl Locator for Guix {
                         .or_else(|| Some(Architecture::infer_from_path(&resolved_executable))),
                 )
                 .manager(self.manager.clone())
+                .known_executables(Some(known_executables))
                 .symlinks(Some(symlinks))
                 .build(),
         )

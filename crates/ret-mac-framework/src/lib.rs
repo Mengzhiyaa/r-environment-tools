@@ -9,7 +9,10 @@ use ret_core::{
     Locator, LocatorKind,
 };
 use ret_fs::path::resolve_symlink;
-use ret_r_utils::{env::ResolvedRInstallation, executable::find_executables};
+use ret_r_utils::{
+    env::ResolvedRInstallation,
+    executable::{filter_symlink_paths, find_executables},
+};
 use std::{fs, path::PathBuf};
 
 pub struct MacFramework {}
@@ -53,15 +56,18 @@ impl Locator for MacFramework {
                 .map(|name| name.to_string_lossy().to_string())
         });
 
-        let mut symlinks = env.symlinks.clone().unwrap_or_default();
+        let mut extra_executables = find_executables(home.join("bin"));
         let current =
             PathBuf::from("/Library/Frameworks/R.framework/Versions/Current/Resources/bin/R");
         if let Some(target) = resolve_symlink(&current) {
             if target == executable {
-                symlinks.push(current);
+                extra_executables.push(current);
             }
         }
-        symlinks.extend(find_executables(home.join("bin")));
+        let mut symlinks = env.symlinks.clone().unwrap_or_default();
+        symlinks.extend(filter_symlink_paths(extra_executables.clone()));
+        let mut known_executables = env.known_executables.clone().unwrap_or_default();
+        known_executables.extend(extra_executables);
 
         let arch = env
             .arch
@@ -75,6 +81,7 @@ impl Locator for MacFramework {
                 .home(Some(home))
                 .version(version)
                 .arch(Some(arch))
+                .known_executables(Some(known_executables))
                 .symlinks(Some(symlinks))
                 .build(),
         )

@@ -11,7 +11,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{cache::create_cache, executable::new_silent_command};
+use crate::{
+    cache::create_cache,
+    executable::{filter_symlink_paths, new_silent_command, normalize_executable_paths},
+};
 
 const R_INFO_SEPARATOR: &str = "ret-r-installation-info";
 const R_INFO_CMD: &str = "cat('ret-r-installation-info\\n');cat(paste(R.version$major, R.version$minor, sep='.'), '\\n', sep='');cat(normalizePath(R.home(), winslash='/', mustWork=FALSE), '\\n', sep='');cat(R.version$arch, '\\n', sep='')";
@@ -23,6 +26,7 @@ pub struct ResolvedRInstallation {
     pub home: PathBuf,
     pub version: String,
     pub arch: Architecture,
+    pub known_executables: Option<Vec<PathBuf>>,
     pub symlinks: Option<Vec<PathBuf>>,
 }
 
@@ -33,21 +37,22 @@ impl ResolvedRInstallation {
             Some(self.home.clone()),
             Some(self.version.clone()),
         );
+        env.known_executables.clone_from(&self.known_executables);
         env.symlinks.clone_from(&self.symlinks);
         env.arch = Some(self.arch.clone());
         env
     }
 
     pub fn add_to_cache(&self, installation: RInstallation) {
-        let symlinks = installation.symlinks.clone().unwrap_or_default();
-        if symlinks.contains(&self.executable)
+        let known_executables = installation.known_executables.clone().unwrap_or_default();
+        if known_executables.contains(&self.executable)
             && installation.version.clone().unwrap_or_default() == self.version
             && installation.home.clone().unwrap_or_default() == self.home
             && installation.arch == Some(self.arch.clone())
         {
             let cache = create_cache(self.executable.clone());
             let entry = cache.lock().expect("cache mutex poisoned");
-            entry.track_symlinks(symlinks)
+            entry.track_executables(known_executables)
         } else {
             error!(
                 "Invalid R installation being cached: {:?} expected {:?}",
@@ -125,31 +130,35 @@ fn get_installation_details(executable: &Path) -> Option<ResolvedRInstallation> 
                 Architecture::X86
             };
 
-            let mut symlinks = vec![norm_case(executable.to_path_buf())];
+            let preferred_candidates = preferred_executables(&home);
+            let preferred_executable = preferred_candidates
+                .iter()
+                .find(|candidate| candidate.exists())
+                .cloned()
+                .map(norm_case)
+                .unwrap_or_else(|| norm_case(executable.to_path_buf()));
+
+            let mut known_executables = vec![norm_case(executable.to_path_buf())];
             if let Ok(canonical) = fs::canonicalize(executable) {
-                symlinks.push(norm_case(canonical));
+                known_executables.push(norm_case(canonical));
             }
 
-            for candidate in preferred_executables(&home) {
+            for candidate in preferred_candidates {
                 if candidate.exists() {
-                    symlinks.push(norm_case(candidate));
+                    known_executables.push(norm_case(candidate));
                 }
             }
 
-            symlinks.sort();
-            symlinks.dedup();
-
-            let preferred_executable = preferred_executables(&home)
-                .into_iter()
-                .find(|candidate| candidate.exists())
-                .unwrap_or_else(|| norm_case(executable.to_path_buf()));
+            let known_executables = normalize_executable_paths(known_executables);
+            let symlinks = filter_symlink_paths(known_executables.clone());
 
             Some(ResolvedRInstallation {
                 executable: preferred_executable,
                 home,
                 version,
                 arch,
-                symlinks: Some(symlinks),
+                known_executables: Some(known_executables),
+                symlinks: (!symlinks.is_empty()).then_some(symlinks),
             })
         }
         Err(err) => {

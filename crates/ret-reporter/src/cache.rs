@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::installation::get_installation_key;
+use crate::installation::{get_installation_key, merge_installations};
 use ret_core::{
     manager::EnvManager, r_installation::RInstallation, reporter::Reporter,
     telemetry::TelemetryEvent,
@@ -27,6 +27,30 @@ impl CacheReporter {
             reported_installations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+
+    pub fn get_installations(&self) -> Vec<RInstallation> {
+        let mut installations = self
+            .reported_installations
+            .read()
+            .expect("reported_installations rwlock poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        installations.sort();
+        installations
+    }
+
+    pub fn get_managers(&self) -> Vec<EnvManager> {
+        let mut managers = self
+            .reported_managers
+            .read()
+            .expect("reported_managers rwlock poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        managers.sort();
+        managers
+    }
 }
 
 impl Reporter for CacheReporter {
@@ -47,15 +71,10 @@ impl Reporter for CacheReporter {
 
     fn report_installation(&self, installation: &RInstallation) {
         if let Some(key) = get_installation_key(installation) {
-            {
-                let reported_installations = self.reported_installations.read().unwrap();
-                if reported_installations.contains_key(&key) {
-                    return;
-                }
-            }
-
             let mut reported_installations = self.reported_installations.write().unwrap();
-            if !reported_installations.contains_key(&key) {
+            if let Some(existing) = reported_installations.get_mut(&key) {
+                *existing = merge_installations(existing, installation);
+            } else {
                 reported_installations.insert(key.clone(), installation.clone());
                 self.reporter.report_installation(installation);
             }

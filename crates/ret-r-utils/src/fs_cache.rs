@@ -20,11 +20,11 @@ type FilePathWithMTimeCTime = (PathBuf, SystemTime, Option<SystemTime>);
 #[serde(rename_all = "camelCase")]
 struct CacheEntry {
     pub installation: ResolvedRInstallation,
-    pub symlinks: Vec<FilePathWithMTimeCTime>,
+    pub executables: Vec<FilePathWithMTimeCTime>,
 }
 
 pub fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
-    cache_directory.join(format!("{}.4.json", generate_hash(executable)))
+    cache_directory.join(format!("{}.5.json", generate_hash(executable)))
 }
 
 pub fn delete_cache_file(cache_directory: &Path, executable: &PathBuf) {
@@ -43,7 +43,7 @@ pub fn get_cache_from_file(
     if !cache
         .installation
         .clone()
-        .symlinks
+        .known_executables
         .unwrap_or_default()
         .contains(executable)
     {
@@ -56,10 +56,10 @@ pub fn get_cache_from_file(
         return None;
     }
 
-    let cache_is_valid = cache.symlinks.iter().all(|symlink| {
-        if let Ok(metadata) = symlink.0.metadata() {
-            let mtime_valid = metadata.modified().ok() == Some(symlink.1);
-            let ctime_valid = match symlink.2 {
+    let cache_is_valid = cache.executables.iter().all(|executable| {
+        if let Ok(metadata) = executable.0.metadata() {
+            let mtime_valid = metadata.modified().ok() == Some(executable.1);
+            let ctime_valid = match executable.2 {
                 Some(stored_ctime) => metadata.created().ok() == Some(stored_ctime),
                 None => true,
             };
@@ -71,7 +71,7 @@ pub fn get_cache_from_file(
 
     if cache_is_valid {
         trace!("Using cache from {:?} for {:?}", cache_file, executable);
-        Some((cache.installation, cache.symlinks))
+        Some((cache.installation, cache.executables))
     } else {
         let _ = fs::remove_file(cache_file);
         None
@@ -82,14 +82,14 @@ pub fn store_cache_in_file(
     cache_directory: &Path,
     executable: &PathBuf,
     installation: &ResolvedRInstallation,
-    symlinks_with_times: Vec<FilePathWithMTimeCTime>,
+    executables_with_times: Vec<FilePathWithMTimeCTime>,
 ) {
     let cache_file = generate_cache_file(cache_directory, executable);
     match std::fs::create_dir_all(cache_directory) {
         Ok(_) => {
             let cache = CacheEntry {
                 installation: installation.clone(),
-                symlinks: symlinks_with_times,
+                executables: executables_with_times,
             };
             match std::fs::File::create(cache_file.clone()) {
                 Ok(file) => {

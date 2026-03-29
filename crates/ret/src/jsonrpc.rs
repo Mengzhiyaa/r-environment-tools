@@ -223,14 +223,14 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                 }
 
                 let global_search_paths = context.os_environment.get_know_global_search_locations();
-                let collect_reporter = Arc::new(collect::create_reporter());
-                let reporter = CacheReporter::new(collect_reporter.clone());
+                let reporter = CacheReporter::new(Arc::new(collect::create_reporter()));
                 if find_options.search_path.is_file() {
                     identify_r_executables_using_locators(
                         vec![find_options.search_path.clone()],
                         &context.locators,
                         &reporter,
                         &global_search_paths,
+                        Some(ret_core::r_installation::DiscoverySource::ExplicitSearch),
                     );
                 } else {
                     find_r_installations_in_directory_recursive(
@@ -241,11 +241,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                     );
                 }
 
-                let installations = collect_reporter
-                    .installations
-                    .lock()
-                    .expect("installations mutex poisoned")
-                    .clone();
+                let installations = reporter.get_installations();
                 let payload = build_find_response(installations);
                 send_reply(id, payload);
             });
@@ -484,8 +480,10 @@ fn detect_inaccurate_environment(
         .executable
         .as_ref()
         .map(|_| discovered.executable != resolved.executable);
-    let executable_not_in_symlinks = match (&discovered.executable, &resolved.symlinks) {
-        (Some(executable), Some(symlinks)) => Some(!symlinks.contains(executable)),
+    let executable_not_in_symlinks = match (&discovered.executable, &resolved.known_executables) {
+        (Some(executable), Some(known_executables)) => {
+            Some(!known_executables.contains(executable))
+        }
         _ => None,
     };
     let invalid_prefix = discovered

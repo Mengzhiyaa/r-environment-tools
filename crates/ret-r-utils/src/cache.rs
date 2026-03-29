@@ -23,7 +23,7 @@ lazy_static! {
 pub trait CacheEntry: Send + Sync {
     fn get(&self) -> Option<ResolvedRInstallation>;
     fn store(&self, installation: ResolvedRInstallation);
-    fn track_symlinks(&self, symlinks: Vec<PathBuf>);
+    fn track_executables(&self, executables: Vec<PathBuf>);
 }
 
 pub fn clear_cache() -> io::Result<()> {
@@ -121,7 +121,7 @@ struct CacheEntryImpl {
     cache_directory: Option<PathBuf>,
     executable: PathBuf,
     installation: Arc<Mutex<Option<ResolvedRInstallation>>>,
-    symlinks: Arc<Mutex<Vec<FilePathWithMTimeCTime>>>,
+    executables: Arc<Mutex<Vec<FilePathWithMTimeCTime>>>,
 }
 
 impl CacheEntryImpl {
@@ -130,25 +130,28 @@ impl CacheEntryImpl {
             cache_directory,
             executable,
             installation: Arc::new(Mutex::new(None)),
-            symlinks: Arc::new(Mutex::new(Vec::new())),
+            executables: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     pub fn verify_in_memory_cache(&self) {
-        for symlink_info in self
-            .symlinks
+        for executable_info in self
+            .executables
             .lock()
-            .expect("symlinks mutex poisoned")
+            .expect("executables mutex poisoned")
             .iter()
         {
-            if let Ok(metadata) = symlink_info.0.metadata() {
-                let mtime_changed = metadata.modified().ok() != Some(symlink_info.1);
-                let ctime_changed = match symlink_info.2 {
+            if let Ok(metadata) = executable_info.0.metadata() {
+                let mtime_changed = metadata.modified().ok() != Some(executable_info.1);
+                let ctime_changed = match executable_info.2 {
                     Some(stored_ctime) => metadata.created().ok() != Some(stored_ctime),
                     None => false,
                 };
                 if mtime_changed || ctime_changed {
-                    trace!("Symlink {:?} changed since it was cached", symlink_info.0);
+                    trace!(
+                        "Executable {:?} changed since it was cached",
+                        executable_info.0
+                    );
                     self.installation
                         .lock()
                         .expect("installation mutex poisoned")
@@ -178,15 +181,16 @@ impl CacheEntry for CacheEntryImpl {
         }
 
         if let Some(ref cache_directory) = self.cache_directory {
-            let (installation, mut symlinks) =
+            let (installation, mut executables) =
                 get_cache_from_file(cache_directory, &self.executable)?;
             self.installation
                 .lock()
                 .expect("installation mutex poisoned")
                 .replace(installation.clone());
-            let mut locked_symlinks = self.symlinks.lock().expect("symlinks mutex poisoned");
-            locked_symlinks.clear();
-            locked_symlinks.append(&mut symlinks);
+            let mut locked_executables =
+                self.executables.lock().expect("executables mutex poisoned");
+            locked_executables.clear();
+            locked_executables.append(&mut executables);
             Some(installation)
         } else {
             None
@@ -194,23 +198,29 @@ impl CacheEntry for CacheEntryImpl {
     }
 
     fn store(&self, installation: ResolvedRInstallation) {
-        let mut symlinks = vec![];
-        for symlink in installation.symlinks.clone().unwrap_or_default().iter() {
-            if let Ok(metadata) = symlink.metadata() {
+        let mut executables = vec![];
+        for executable in installation
+            .known_executables
+            .clone()
+            .unwrap_or_default()
+            .iter()
+        {
+            if let Ok(metadata) = executable.metadata() {
                 if let Ok(modified) = metadata.modified() {
                     let created = metadata.created().ok();
-                    symlinks.push((symlink.clone(), modified, created));
+                    executables.push((executable.clone(), modified, created));
                 }
             }
         }
 
-        symlinks.sort();
-        symlinks.dedup();
+        executables.sort();
+        executables.dedup();
 
         {
-            let mut locked_symlinks = self.symlinks.lock().expect("symlinks mutex poisoned");
-            locked_symlinks.clear();
-            locked_symlinks.append(&mut symlinks.clone());
+            let mut locked_executables =
+                self.executables.lock().expect("executables mutex poisoned");
+            locked_executables.clear();
+            locked_executables.append(&mut executables.clone());
         }
         self.installation
             .lock()
@@ -220,25 +230,30 @@ impl CacheEntry for CacheEntryImpl {
         trace!("Caching R installation info for {:?}", self.executable);
 
         if let Some(ref cache_directory) = self.cache_directory {
-            store_cache_in_file(cache_directory, &self.executable, &installation, symlinks)
+            store_cache_in_file(
+                cache_directory,
+                &self.executable,
+                &installation,
+                executables,
+            )
         }
     }
 
-    fn track_symlinks(&self, symlinks: Vec<PathBuf>) {
+    fn track_executables(&self, executables: Vec<PathBuf>) {
         self.verify_in_memory_cache();
 
-        let known_symlinks: HashSet<PathBuf> = self
-            .symlinks
+        let known_executables: HashSet<PathBuf> = self
+            .executables
             .lock()
-            .expect("symlinks mutex poisoned")
+            .expect("executables mutex poisoned")
             .clone()
             .iter()
             .map(|x| x.0.clone())
             .collect();
 
-        let symlinks_to_track = symlinks
+        let executables_to_track = executables
             .into_iter()
-            .filter(|path| !known_symlinks.contains(path))
+            .filter(|path| !known_executables.contains(path))
             .filter_map(|path| {
                 let metadata = path.metadata().ok()?;
                 let modified = metadata.modified().ok()?;
@@ -247,9 +262,9 @@ impl CacheEntry for CacheEntryImpl {
             })
             .collect::<Vec<_>>();
 
-        self.symlinks
+        self.executables
             .lock()
-            .expect("symlinks mutex poisoned")
-            .extend(symlinks_to_track);
+            .expect("executables mutex poisoned")
+            .extend(executables_to_track);
     }
 }

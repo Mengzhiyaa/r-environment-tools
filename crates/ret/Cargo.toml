@@ -18,6 +18,7 @@ ret-guix = { path = "../ret-guix" }
 ret-jsonrpc = { path = "../ret-jsonrpc" }
 ret-fs = { path = "../ret-fs" }
 ret-r-utils = { path = "../ret-r-utils" }
+ret-rversions = { path = "../ret-rversions" }
 ret-reporter = { path = "../ret-reporter" }
 ret-homebrew = { path = "../ret-homebrew" }
 ret-linux-global-r = { path = "../ret-linux-global-r" }
@@ -48,4 +49,3 @@ log = "0.4.21"
 [features]
 ci = []
 ci-homebrew-container = []
-

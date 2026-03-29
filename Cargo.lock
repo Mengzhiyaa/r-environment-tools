@@ -537,6 +537,7 @@ dependencies = [
  "ret-r-utils",
  "ret-reporter",
  "ret-rig",
+ "ret-rversions",
  "ret-scoop",
  "ret-spack",
  "ret-windows-hq",
@@ -715,6 +716,17 @@ dependencies = [
  "ret-core",
  "ret-fs",
  "ret-r-utils",
+]
+
+[[package]]
+name = "ret-rversions"
+version = "0.1.1"
+dependencies = [
+ "log",
+ "ret-core",
+ "ret-module",
+ "ret-r-utils",
+ "tempfile",
 ]
 
 [[package]]

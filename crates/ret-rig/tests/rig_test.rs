@@ -10,7 +10,7 @@ use ret_rig::Rig;
 fn try_from_classifies_rig_managed_installation() {
     let locator = Rig::new();
     let mut config = Configuration::default();
-    config.rig_executable = Some(PathBuf::from("/usr/local/bin/rig"));
+    config.rig_executable = Some(norm_case("/usr/local/bin/rig"));
     locator.configure(&config);
 
     let env = REnv::new(
@@ -33,7 +33,7 @@ fn try_from_classifies_rig_managed_installation() {
 
     let manager = installation.manager.expect("rig manager should be present");
     assert_eq!(manager.tool, EnvManagerType::Rig);
-    assert_eq!(manager.executable, PathBuf::from("/usr/local/bin/rig"));
+    assert_eq!(manager.executable, norm_case("/usr/local/bin/rig"));
 }
 
 #[test]

@@ -123,7 +123,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{get_conda_dir_from_cmd, is_conda_env, is_conda_install};
-    use std::path::PathBuf;
+    use ret_fs::path::norm_case;
 
     #[cfg(unix)]
     #[test]
@@ -131,7 +131,7 @@ mod tests {
         let result = get_conda_dir_from_cmd(
             "# cmd: /opt/miniconda3/bin/conda create -n analysis".to_string(),
         );
-        assert_eq!(result, Some(PathBuf::from("/opt/miniconda3")));
+        assert_eq!(result, Some(norm_case("/opt/miniconda3")));
     }
 
     #[cfg(unix)]
@@ -140,7 +140,7 @@ mod tests {
         let result = get_conda_dir_from_cmd(
             "# cmd: /home/user/miniconda3/condabin/conda create -n test".to_string(),
         );
-        assert_eq!(result, Some(PathBuf::from("/home/user/miniconda3")));
+        assert_eq!(result, Some(norm_case("/home/user/miniconda3")));
     }
 
     #[cfg(windows)]
@@ -149,7 +149,7 @@ mod tests {
         let result = get_conda_dir_from_cmd(
             r"# cmd: C:\Users\user\miniconda3\Scripts\conda.exe create -n env1".to_string(),
         );
-        assert_eq!(result, Some(PathBuf::from(r"C:\Users\user\miniconda3")));
+        assert_eq!(result, Some(norm_case(r"C:\Users\user\miniconda3")));
     }
 
     #[test]

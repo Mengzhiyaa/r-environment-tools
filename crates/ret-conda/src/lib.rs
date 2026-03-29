@@ -12,12 +12,15 @@ use ret_core::{
     env::REnv,
     manager::EnvManagerType,
     os_environment::Environment,
-    r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
+    r_installation::{LocatorMetadata, RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
     Configuration, Locator, LocatorKind,
 };
 use ret_fs::path::norm_case;
-use ret_r_utils::{env::ResolvedRInstallation, executable::find_executable};
+use ret_r_utils::{
+    env::ResolvedRInstallation,
+    executable::{filter_symlink_paths, find_executable},
+};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
@@ -148,7 +151,12 @@ impl Conda {
             .version(Some(resolved.version.clone()))
             .arch(Some(resolved.arch.clone()))
             .manager(manager.map(|manager| manager.to_manager()))
+            .known_executables(resolved.known_executables.clone())
             .symlinks(resolved.symlinks.clone())
+            .startup_command(build_conda_startup_command(prefix))
+            .locator_metadata(Some(LocatorMetadata::Conda {
+                environment_path: prefix.to_path_buf(),
+            }))
             .build()
     }
 
@@ -167,8 +175,9 @@ impl Conda {
         // Derive R home — returns None if lib/R doesn't exist
         let r_home = Self::infer_conda_r_home(prefix)?;
 
-        let symlinks = collect_r_executables(prefix, &r_home);
-        let preferred_exe = pick_preferred_executable(executable, &symlinks);
+        let known_executables = collect_r_executables(prefix, &r_home);
+        let symlinks = filter_symlink_paths(known_executables.clone());
+        let preferred_exe = pick_preferred_executable(executable, &known_executables);
 
         let conda_dir = manager.as_ref().and_then(|m| m.conda_dir.clone());
         let name = get_conda_env_name(prefix, &conda_dir);
@@ -185,7 +194,12 @@ impl Conda {
             .version(Some(pkg_info.version))
             .arch(pkg_info.arch)
             .manager(manager.map(|m| m.to_manager()))
+            .known_executables(Some(known_executables))
             .symlinks(Some(symlinks))
+            .startup_command(build_conda_startup_command(prefix))
+            .locator_metadata(Some(LocatorMetadata::Conda {
+                environment_path: prefix.to_path_buf(),
+            }))
             .build();
 
         self.environments
@@ -346,8 +360,9 @@ impl Locator for Conda {
         if let Some(pkg_info) = RCondaPackageInfo::from(&prefix) {
             if let Some(r_home) = Self::infer_conda_r_home(&prefix) {
                 let manager = self.get_manager_for_prefix(&prefix);
-                let symlinks = collect_r_executables(&prefix, &r_home);
-                let preferred_exe = pick_preferred_executable(&env.executable, &symlinks);
+                let known_executables = collect_r_executables(&prefix, &r_home);
+                let symlinks = filter_symlink_paths(known_executables.clone());
+                let preferred_exe = pick_preferred_executable(&env.executable, &known_executables);
                 let conda_dir = manager.as_ref().and_then(|m| m.conda_dir.clone());
                 let name = get_conda_env_name(&prefix, &conda_dir);
                 let display_name = name
@@ -363,11 +378,15 @@ impl Locator for Conda {
                     .version(Some(pkg_info.version))
                     .arch(pkg_info.arch)
                     .manager(manager.map(|m| m.to_manager()))
+                    .known_executables(Some(known_executables))
                     .symlinks(Some(symlinks))
+                    .startup_command(build_conda_startup_command(&prefix))
+                    .locator_metadata(Some(LocatorMetadata::Conda {
+                        environment_path: prefix.clone(),
+                    }))
                     .build();
 
-                self.environments
-                    .insert(prefix, installation.clone());
+                self.environments.insert(prefix, installation.clone());
                 return Some(installation);
             }
         }
@@ -435,6 +454,14 @@ impl Environment for EnvironmentAdapter {
     }
 }
 
+fn build_conda_startup_command(prefix: &Path) -> Option<String> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(format!("conda activate {}", prefix.display()))
+    }
+}
+
 /// Collect all known R executables for a conda environment.
 /// Handles both Unix and Windows layouts.
 fn collect_r_executables(prefix: &Path, r_home: &Path) -> Vec<PathBuf> {
@@ -493,9 +520,9 @@ fn collect_r_executables(prefix: &Path, r_home: &Path) -> Vec<PathBuf> {
 
 /// Pick the preferred executable from the collected set.
 /// Prefers `<prefix>/bin/R` (or `R.exe` on Windows).
-fn pick_preferred_executable(found: &Path, symlinks: &[PathBuf]) -> PathBuf {
+fn pick_preferred_executable(found: &Path, known_executables: &[PathBuf]) -> PathBuf {
     let target = if cfg!(windows) { "R.exe" } else { "R" };
-    symlinks
+    known_executables
         .iter()
         .find(|p| {
             p.file_name()

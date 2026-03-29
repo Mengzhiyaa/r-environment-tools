@@ -4,12 +4,15 @@
 use ret_core::{
     arch::Architecture,
     env::REnv,
-    r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
+    r_installation::{LocatorMetadata, RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
     Locator, LocatorKind,
 };
-use ret_r_utils::executable::find_executables;
-use std::path::{Path, PathBuf};
+use ret_r_utils::executable::{filter_symlink_paths, find_executables};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Returns `true` if the given path is a Pixi environment.
 ///
@@ -17,6 +20,35 @@ use std::path::{Path, PathBuf};
 /// marker file. This distinguishes them from plain conda environments.
 pub fn is_pixi_env(path: &Path) -> bool {
     path.join("conda-meta").join("pixi").is_file()
+}
+
+fn infer_manifest_path(prefix: &Path) -> Option<PathBuf> {
+    let envs_dir = prefix.parent()?;
+    if envs_dir.file_name()?.to_string_lossy() != "envs" {
+        return None;
+    }
+
+    let pixi_dir = envs_dir.parent()?;
+    if pixi_dir.file_name()?.to_string_lossy() != ".pixi" {
+        return None;
+    }
+
+    let project_root = pixi_dir.parent()?;
+    let pixi_toml = project_root.join("pixi.toml");
+    if pixi_toml.is_file() {
+        return Some(pixi_toml);
+    }
+
+    let pyproject = project_root.join("pyproject.toml");
+    if pyproject.is_file()
+        && fs::read_to_string(&pyproject)
+            .map(|content| content.contains("[tool.pixi]"))
+            .unwrap_or(false)
+    {
+        return Some(pyproject);
+    }
+
+    None
 }
 
 /// Attempts to find the Pixi environment prefix from the R executable path.
@@ -88,13 +120,16 @@ impl Locator for Pixi {
 
         let home = env.home.clone();
 
+        let extra_executables = find_executables(&prefix);
         let mut symlinks = env.symlinks.clone().unwrap_or_default();
-        symlinks.extend(find_executables(&prefix));
+        symlinks.extend(filter_symlink_paths(extra_executables.clone()));
+        let mut known_executables = env.known_executables.clone().unwrap_or_default();
+        known_executables.extend(extra_executables);
 
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Pixi))
                 .display_name(Some(display_name))
-                .name(Some(name))
+                .name(Some(name.clone()))
                 .executable(Some(env.executable.clone()))
                 .home(home)
                 .version(env.version.clone())
@@ -103,7 +138,13 @@ impl Locator for Pixi {
                         .clone()
                         .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
                 )
+                .known_executables(Some(known_executables))
                 .symlinks(Some(symlinks))
+                .locator_metadata(Some(LocatorMetadata::Pixi {
+                    environment_path: prefix.clone(),
+                    manifest_path: infer_manifest_path(&prefix),
+                    environment_name: Some(name),
+                }))
                 .build(),
         )
     }
@@ -116,7 +157,7 @@ impl Locator for Pixi {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_pixi_prefix, is_pixi_env};
+    use super::{get_pixi_prefix, infer_manifest_path, is_pixi_env};
     use std::path::PathBuf;
 
     #[test]
@@ -160,5 +201,36 @@ mod tests {
     fn non_pixi_path_returns_none() {
         let env = ret_core::env::REnv::new(PathBuf::from("/usr/bin/R"), None, None);
         assert_eq!(get_pixi_prefix(&env), None);
+    }
+
+    #[test]
+    fn infer_manifest_path_prefers_pixi_toml() {
+        let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+        let project = tmp.path().join("project");
+        let prefix = project.join(".pixi").join("envs").join("default");
+        let conda_meta = prefix.join("conda-meta");
+        std::fs::create_dir_all(&conda_meta).expect("failed to create conda-meta");
+        std::fs::write(conda_meta.join("pixi"), "").expect("failed to create pixi marker");
+        let manifest = project.join("pixi.toml");
+        std::fs::create_dir_all(&project).expect("failed to create project dir");
+        std::fs::write(&manifest, "[project]\nname='demo'\n").expect("failed to write manifest");
+
+        assert_eq!(infer_manifest_path(&prefix), Some(manifest));
+    }
+
+    #[test]
+    fn infer_manifest_path_accepts_tool_pixi_pyproject() {
+        let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+        let project = tmp.path().join("project");
+        let prefix = project.join(".pixi").join("envs").join("default");
+        let conda_meta = prefix.join("conda-meta");
+        std::fs::create_dir_all(&conda_meta).expect("failed to create conda-meta");
+        std::fs::write(conda_meta.join("pixi"), "").expect("failed to create pixi marker");
+        let pyproject = project.join("pyproject.toml");
+        std::fs::create_dir_all(&project).expect("failed to create project dir");
+        std::fs::write(&pyproject, "[tool.pixi]\nchannels=[]\n")
+            .expect("failed to write pyproject");
+
+        assert_eq!(infer_manifest_path(&prefix), Some(pyproject));
     }
 }

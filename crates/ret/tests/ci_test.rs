@@ -185,20 +185,16 @@ fn verify_find_with_executable(executable: &PathBuf, original: &RInstallation) {
     let locators = create_locators(&environment);
     let global_search_paths = environment.get_know_global_search_locations();
 
-    let collect_reporter = Arc::new(collect::create_reporter());
-    let reporter = CacheReporter::new(collect_reporter.clone());
+    let reporter = CacheReporter::new(Arc::new(collect::create_reporter()));
     identify_r_executables_using_locators(
         vec![executable.clone()],
         &locators,
         &reporter,
         &global_search_paths,
+        Some(ret_core::r_installation::DiscoverySource::ExplicitSearch),
     );
 
-    let found = collect_reporter
-        .installations
-        .lock()
-        .expect("installations mutex poisoned")
-        .clone();
+    let found = reporter.get_installations();
 
     assert!(
         !found.is_empty(),

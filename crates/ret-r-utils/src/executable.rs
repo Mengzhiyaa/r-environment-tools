@@ -4,6 +4,7 @@
 use lazy_static::lazy_static;
 use log::trace;
 use regex::Regex;
+use ret_fs::path::norm_case;
 use std::ffi::OsStr;
 use std::{
     fs,
@@ -131,6 +132,34 @@ pub fn find_executables<T: AsRef<Path>>(install_path: T) -> Vec<PathBuf> {
     executables.sort();
     executables.dedup();
     executables
+}
+
+pub fn normalize_executable_paths<I>(paths: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let mut paths = paths.into_iter().map(norm_case).collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+pub fn filter_symlink_paths<I>(paths: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let mut symlinks = paths
+        .into_iter()
+        .map(norm_case)
+        .filter(|path| {
+            path.symlink_metadata()
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    symlinks.sort();
+    symlinks.dedup();
+    symlinks
 }
 
 pub fn is_r_executable_name(exe: &Path) -> bool {

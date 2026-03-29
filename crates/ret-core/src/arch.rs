@@ -1,11 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Ord, PartialOrd)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Architecture {
     Arm64,
     X64,
@@ -35,13 +34,54 @@ impl Architecture {
     }
 }
 
+impl Architecture {
+    pub fn as_serialized_str(&self) -> &'static str {
+        match self {
+            Architecture::Arm64 => "arm64",
+            Architecture::X64 => "x86_64",
+            Architecture::X86 => "x86",
+        }
+    }
+
+    pub fn from_serialized_str(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "arm64" | "aarch64" => Some(Architecture::Arm64),
+            "x64" | "x86_64" | "amd64" => Some(Architecture::X64),
+            "x86" | "i386" | "i686" => Some(Architecture::X86),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for Architecture {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_serialized_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Architecture {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Architecture::from_serialized_str(&value).ok_or_else(|| {
+            serde::de::Error::unknown_variant(
+                &value,
+                &[
+                    "arm64", "aarch64", "x86_64", "x64", "amd64", "x86", "i386", "i686",
+                ],
+            )
+        })
+    }
+}
+
 impl std::fmt::Display for Architecture {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Architecture::Arm64 => write!(f, "arm64"),
-            Architecture::X64 => write!(f, "x64"),
-            Architecture::X86 => write!(f, "x86"),
-        }
+        write!(f, "{}", self.as_serialized_str())
     }
 }
 
@@ -57,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_architecture_display_x64() {
-        assert_eq!(format!("{}", Architecture::X64), "x64");
+        assert_eq!(format!("{}", Architecture::X64), "x86_64");
     }
 
     #[test]
@@ -113,7 +153,7 @@ mod tests {
     fn test_architecture_serialize() {
         assert_eq!(
             serde_json::to_string(&Architecture::X64).unwrap(),
-            "\"x64\""
+            "\"x86_64\""
         );
         assert_eq!(
             serde_json::to_string(&Architecture::X86).unwrap(),
@@ -132,11 +172,19 @@ mod tests {
             Architecture::X64
         );
         assert_eq!(
+            serde_json::from_str::<Architecture>("\"x86_64\"").unwrap(),
+            Architecture::X64
+        );
+        assert_eq!(
             serde_json::from_str::<Architecture>("\"x86\"").unwrap(),
             Architecture::X86
         );
         assert_eq!(
             serde_json::from_str::<Architecture>("\"arm64\"").unwrap(),
+            Architecture::Arm64
+        );
+        assert_eq!(
+            serde_json::from_str::<Architecture>("\"aarch64\"").unwrap(),
             Architecture::Arm64
         );
     }

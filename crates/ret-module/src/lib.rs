@@ -15,7 +15,7 @@ use ret_core::{
     env::REnv,
     manager::{EnvManager, EnvManagerType},
     os_environment::Environment,
-    r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
+    r_installation::{LocatorMetadata, RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
     Locator, LocatorKind,
 };
@@ -74,6 +74,7 @@ impl Locator for EnvironmentModule {
                         .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
                 )
                 .manager(self.manager.clone())
+                .known_executables(env.known_executables.clone())
                 .symlinks(env.symlinks.clone())
                 .build(),
         )
@@ -103,6 +104,19 @@ impl Locator for EnvironmentModule {
                 if let Some(resolved) = ResolvedRInstallation::from(&r_binary) {
                     let env = resolved.to_r_env();
                     if let Some(installation) = self.try_from(&env) {
+                        let installation = RInstallationBuilder::from_installation(installation)
+                            .startup_command(Some(build_module_startup_command(
+                                modulecmd,
+                                module_name,
+                            )))
+                            .locator_metadata(Some(LocatorMetadata::Module {
+                                module_name: module_name.clone(),
+                                startup_command: build_module_startup_command(
+                                    modulecmd,
+                                    module_name,
+                                ),
+                            }))
+                            .build();
                         resolved.add_to_cache(installation.clone());
                         if let Some(manager) = &installation.manager {
                             reporter.report_manager(manager);
@@ -115,8 +129,12 @@ impl Locator for EnvironmentModule {
     }
 }
 
+pub fn build_module_startup_command(modulecmd: &Path, module_name: &str) -> String {
+    format!("eval $({} sh load {})", modulecmd.display(), module_name)
+}
+
 /// Paths characteristic of Environment Modules / Lmod installations.
-fn looks_like_module_path(path: &Path) -> bool {
+pub fn looks_like_module_path(path: &Path) -> bool {
     let s = path.to_string_lossy();
     // Common module installation trees
     s.contains("/modules/")
@@ -129,7 +147,7 @@ fn looks_like_module_path(path: &Path) -> bool {
 }
 
 /// Find the modulecmd / module command.
-fn find_modulecmd(environment: &dyn Environment) -> Option<PathBuf> {
+pub fn find_modulecmd(environment: &dyn Environment) -> Option<PathBuf> {
     // LMOD_CMD is set by Lmod when a module is loaded.
     if let Some(lmod_cmd) = environment
         .get_env_var("LMOD_CMD".to_string())
@@ -230,7 +248,7 @@ fn list_r_modules(modulecmd: &Path) -> Vec<String> {
 /// Resolve the R binary from loading a module.
 ///
 /// Runs: `eval $(modulecmd sh load <module>) && which R`
-fn resolve_r_from_module(modulecmd: &Path, module_name: &str) -> Option<PathBuf> {
+pub fn resolve_r_from_module(modulecmd: &Path, module_name: &str) -> Option<PathBuf> {
     let script = format!(
         "eval $({} sh load {}) 2>/dev/null && which R",
         modulecmd.display(),
