@@ -24,6 +24,10 @@ jobs:
             target: x86_64-unknown-linux-musl
             platform: linux
             arch: x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            platform: linux
+            arch: arm64
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: darwin
@@ -35,6 +39,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install musl tools (Linux x64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install cross-compilation tools (Linux arm64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
+          sudo ln -s /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-musl-gcc
+          mkdir -p .cargo
+          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
 
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
