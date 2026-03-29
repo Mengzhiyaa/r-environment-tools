@@ -3,8 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use ts_rs::TS;
 
-#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Hash, Ord, PartialOrd)]
+#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Hash, Ord, PartialOrd, TS)]
 pub enum EnvManagerType {
     Chocolatey,
     Conda,
@@ -20,9 +21,10 @@ pub enum EnvManagerType {
     WindowsRegistry,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 #[derive(Debug)]
+#[ts(rename_all = "camelCase")]
 pub struct EnvManager {
     pub executable: PathBuf,
     pub version: Option<String>,

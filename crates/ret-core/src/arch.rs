@@ -3,11 +3,15 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::Path;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, TS)]
 pub enum Architecture {
+    #[ts(rename = "arm64")]
     Arm64,
+    #[ts(rename = "x86_64")]
     X64,
+    #[ts(rename = "x86")]
     X86,
 }
 

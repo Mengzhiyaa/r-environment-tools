@@ -6,6 +6,7 @@ use log::error;
 use ret_fs::path::norm_case;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
+use ts_rs::TS;
 
 use crate::{arch::Architecture, manager::EnvManager};
 
@@ -22,6 +23,7 @@ use crate::{arch::Architecture, manager::EnvManager};
     Hash,
     Ord,
     PartialOrd,
+    TS,
 )]
 pub enum RInstallationKind {
     Chocolatey,
@@ -42,8 +44,9 @@ pub enum RInstallationKind {
     GlobalPaths,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash, Ord, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash, Ord, PartialOrd, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub enum DiscoverySource {
     Locator,
     GlobalPaths,
@@ -51,8 +54,9 @@ pub enum DiscoverySource {
     RVersions,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum LocatorMetadata {
     Conda {
         environment_path: PathBuf,
@@ -78,8 +82,9 @@ impl LocatorMetadata {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct RVersionsOverlay {
     pub label: Option<String>,
     pub script: Option<String>,
@@ -89,8 +94,9 @@ pub struct RVersionsOverlay {
     pub module_startup_command: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct RInstallation {
     pub display_name: Option<String>,
     pub name: Option<String>,
