@@ -5,11 +5,12 @@ use ret_core::{
     arch::Architecture,
     env::REnv,
     manager::{EnvManager, EnvManagerType},
+    os_environment::{Environment, EnvironmentApi},
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
     Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
-use ret_r_utils::env::ResolvedRInstallation;
+use ret_r_utils::{env::ResolvedRInstallation, executable::find_executable};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -18,13 +19,48 @@ use std::{
 
 pub struct Rig {
     rig_executable: Arc<RwLock<Option<PathBuf>>>,
+    install_roots: Vec<PathBuf>,
+    classification_roots: Vec<PathBuf>,
 }
 
 impl Rig {
     pub fn new() -> Rig {
+        Self::from(&EnvironmentApi::new())
+    }
+
+    pub fn from(environment: &dyn Environment) -> Rig {
+        let (install_roots, classification_roots) = rig_roots(environment);
         Rig {
             rig_executable: Arc::new(RwLock::new(find_rig_executable())),
+            install_roots,
+            classification_roots,
         }
+    }
+
+    fn installation_from_env(&self, env: &REnv) -> Option<RInstallation> {
+        let home = env.home.clone()?;
+        Some(
+            RInstallationBuilder::new(Some(RInstallationKind::Rig))
+                .display_name(Some("rig managed R".to_string()))
+                .executable(Some(env.executable.clone()))
+                .home(Some(home))
+                .version(env.version.clone())
+                .arch(
+                    env.arch
+                        .clone()
+                        .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
+                )
+                .manager(
+                    self.rig_executable
+                        .read()
+                        .unwrap()
+                        .clone()
+                        .map(|path| EnvManager::new(path, EnvManagerType::Rig, None)),
+                )
+                .known_executables(env.known_executables.clone())
+                .symlinks(env.symlinks.clone())
+                .build(),
+        )
     }
 }
 
@@ -54,37 +90,22 @@ impl Locator for Rig {
 
     fn try_from(&self, env: &REnv) -> Option<RInstallation> {
         let home = env.home.clone()?;
-        if !looks_like_rig_path(&home) && !looks_like_rig_path(&env.executable) {
+        if !looks_like_rig_path(&home)
+            && !looks_like_rig_path(&env.executable)
+            && !self
+                .classification_roots
+                .iter()
+                .any(|root| home.starts_with(root) || env.executable.starts_with(root))
+        {
             return None;
         }
 
-        Some(
-            RInstallationBuilder::new(Some(RInstallationKind::Rig))
-                .display_name(Some("rig managed R".to_string()))
-                .executable(Some(env.executable.clone()))
-                .home(Some(home))
-                .version(env.version.clone())
-                .arch(
-                    env.arch
-                        .clone()
-                        .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
-                )
-                .manager(
-                    self.rig_executable
-                        .read()
-                        .unwrap()
-                        .clone()
-                        .map(|path| EnvManager::new(path, EnvManagerType::Rig, None)),
-                )
-                .known_executables(env.known_executables.clone())
-                .symlinks(env.symlinks.clone())
-                .build(),
-        )
+        self.installation_from_env(env)
     }
 
     fn find(&self, reporter: &dyn Reporter) {
-        for root in rig_roots() {
-            let Ok(entries) = fs::read_dir(&root) else {
+        for root in &self.install_roots {
+            let Ok(entries) = fs::read_dir(root) else {
                 continue;
             };
             for entry in entries.filter_map(Result::ok) {
@@ -95,20 +116,14 @@ impl Locator for Rig {
                 ];
 
                 for home in candidates {
-                    let executable = if cfg!(windows) {
-                        home.join("bin").join("x64").join("R.exe")
-                    } else {
-                        home.join("bin").join("R")
+                    let Some(executable) = find_executable(&home) else {
+                        continue;
                     };
-                    if !looks_like_rig_path(&home) && !looks_like_rig_path(&executable) {
-                        continue;
-                    }
-                    if !executable.exists() {
-                        continue;
-                    }
                     if let Some(resolved) = ResolvedRInstallation::from(&executable) {
                         let env = resolved.to_r_env();
-                        if let Some(installation) = self.try_from(&env) {
+                        // The directory was enumerated from a rig install root, so
+                        // it remains authoritative even when the root is customized.
+                        if let Some(installation) = self.installation_from_env(&env) {
                             resolved.add_to_cache(installation.clone());
                             if let Some(manager) = &installation.manager {
                                 reporter.report_manager(manager);
@@ -130,12 +145,40 @@ fn looks_like_rig_path(path: &Path) -> bool {
         || path.contains("/rig/")
 }
 
-fn rig_roots() -> Vec<PathBuf> {
-    vec![
+fn rig_roots(environment: &dyn Environment) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut roots = vec![
         PathBuf::from("/opt/R"),
         PathBuf::from("/Library/Frameworks/R.framework/Versions"),
         PathBuf::from(r"C:\Program Files\R"),
-    ]
+    ];
+    let mut classification_roots = Vec::new();
+
+    if let Some(custom_root) = environment.get_env_var("RIG_R_INSTALL_DIR".to_string()) {
+        let custom_root = PathBuf::from(custom_root);
+        classification_roots.push(custom_root.clone());
+        roots.push(custom_root);
+    }
+    if let Some(home) = environment.get_user_home() {
+        let user_root = if cfg!(windows) {
+            environment
+                .get_env_var("APPDATA".to_string())
+                .map(PathBuf::from)
+                .unwrap_or(home)
+                .join("rig")
+                .join("data")
+                .join("r")
+        } else {
+            home.join(".local").join("share").join("rig").join("r")
+        };
+        classification_roots.push(user_root.clone());
+        roots.push(user_root);
+    }
+
+    roots.sort();
+    roots.dedup();
+    classification_roots.sort();
+    classification_roots.dedup();
+    (roots, classification_roots)
 }
 
 fn find_rig_executable() -> Option<PathBuf> {
@@ -152,8 +195,58 @@ fn find_rig_executable() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{looks_like_rig_path, rig_roots};
-    use ret_core::{env::REnv, r_installation::RInstallationKind, Locator};
+    use ret_core::{
+        env::REnv, os_environment::Environment, r_installation::RInstallationKind, Locator,
+    };
     use std::path::{Path, PathBuf};
+
+    struct TestEnvironment;
+
+    fn test_home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\tester")
+        } else {
+            PathBuf::from("/home/tester")
+        }
+    }
+
+    fn test_custom_root() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"D:\managed-r")
+        } else {
+            PathBuf::from("/srv/managed-r")
+        }
+    }
+
+    fn test_user_root() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\tester\AppData\Roaming\rig\data\r")
+        } else {
+            PathBuf::from("/home/tester/.local/share/rig/r")
+        }
+    }
+
+    impl Environment for TestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            Some(test_home())
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, key: String) -> Option<String> {
+            match key.as_str() {
+                "RIG_R_INSTALL_DIR" => Some(test_custom_root().to_string_lossy().into_owned()),
+                "APPDATA" if cfg!(windows) => Some(r"C:\Users\tester\AppData\Roaming".to_string()),
+                _ => None,
+            }
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
 
     #[test]
     fn recognizes_rig_linux_path() {
@@ -183,10 +276,31 @@ mod tests {
 
     #[test]
     fn rig_roots_contains_expected_paths() {
-        let roots = rig_roots();
+        let (roots, classification_roots) = rig_roots(&TestEnvironment);
         assert!(roots.contains(&PathBuf::from("/opt/R")));
         assert!(roots.contains(&PathBuf::from("/Library/Frameworks/R.framework/Versions")));
         assert!(roots.contains(&PathBuf::from(r"C:\Program Files\R")));
+        assert!(roots.contains(&test_user_root()));
+        assert!(roots.contains(&test_custom_root()));
+        assert!(classification_roots.contains(&test_custom_root()));
+    }
+
+    #[test]
+    fn try_from_accepts_custom_rig_root() {
+        let locator = super::Rig::from(&TestEnvironment);
+        let version_root = test_custom_root().join("4.4.1");
+        let env = REnv::new(
+            version_root
+                .join("bin")
+                .join(if cfg!(windows) { "R.exe" } else { "R" }),
+            Some(version_root.join("lib").join("R")),
+            Some("4.4.1".to_string()),
+        );
+
+        assert_eq!(
+            locator.try_from(&env).and_then(|value| value.kind),
+            Some(RInstallationKind::Rig)
+        );
     }
 
     #[test]

@@ -8,3 +8,6 @@ license.workspace = true
 ret-core = { path = "../ret-core" }
 ret-fs = { path = "../ret-fs" }
 ret-r-utils = { path = "../ret-r-utils" }
+
+[dev-dependencies]
+tempfile = "3.14.0"

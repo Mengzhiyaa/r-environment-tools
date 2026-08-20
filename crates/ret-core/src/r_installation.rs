@@ -102,8 +102,8 @@ pub struct RVersionsOverlay {
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
 pub struct RInstallation {
-    /// A custom user-facing label supplied by an external source, such as an
-    /// r-versions entry. Locators must not synthesize this from kind/name/version.
+    /// A user-facing label. Custom labels supplied by external sources take
+    /// precedence over labels derived from kind, name, and version.
     pub display_name: Option<String>,
     /// The environment name, primarily for Conda and Pixi installations.
     pub name: Option<String>,
@@ -473,9 +473,21 @@ impl RInstallationBuilder {
         }
         discovered_by.sort();
         discovered_by.dedup();
+        let display_name = self
+            .rversions_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.label.clone())
+            .or_else(|| {
+                generated_manager_display_name(
+                    self.kind,
+                    self.version.as_deref(),
+                    self.name.as_deref(),
+                )
+            })
+            .or(self.display_name);
 
         RInstallation {
-            display_name: self.display_name,
+            display_name,
             name: self.name,
             executable: self.executable,
             kind: self.kind,
@@ -503,6 +515,24 @@ impl RInstallationBuilder {
             error: self.error,
         }
     }
+}
+
+fn generated_manager_display_name(
+    kind: Option<RInstallationKind>,
+    version: Option<&str>,
+    name: Option<&str>,
+) -> Option<String> {
+    let source = match kind? {
+        RInstallationKind::Conda => "Conda",
+        RInstallationKind::Pixi => "Pixi",
+        _ => return None,
+    };
+    let version = version?;
+
+    Some(match name.filter(|name| !name.is_empty()) {
+        Some(name) => format!("R {version} ({source}: {name})"),
+        None => format!("R {version} ({source})"),
+    })
 }
 
 fn normalize_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -599,6 +629,63 @@ mod tests {
 
         assert_eq!(installation.discovered_by, vec![DiscoverySource::Locator]);
         assert!(global_paths.discovered_by.is_empty());
+    }
+
+    #[test]
+    fn builder_generates_manager_display_names_from_structured_identity() {
+        let conda = RInstallationBuilder::new(Some(RInstallationKind::Conda))
+            .version(Some("4.3.3".to_string()))
+            .name(Some("seurat4".to_string()))
+            .build();
+        let pixi = RInstallationBuilder::new(Some(RInstallationKind::Pixi))
+            .version(Some("4.4.2".to_string()))
+            .name(Some("analysis".to_string()))
+            .build();
+
+        assert_eq!(
+            conda.display_name.as_deref(),
+            Some("R 4.3.3 (Conda: seurat4)")
+        );
+        assert_eq!(
+            pixi.display_name.as_deref(),
+            Some("R 4.4.2 (Pixi: analysis)")
+        );
+        assert_eq!(
+            serde_json::to_value(conda).expect("failed to serialize Conda installation")
+                ["displayName"],
+            "R 4.3.3 (Conda: seurat4)"
+        );
+    }
+
+    #[test]
+    fn builder_generates_manager_display_name_without_environment_name() {
+        let installation = RInstallationBuilder::new(Some(RInstallationKind::Conda))
+            .version(Some("4.3.3".to_string()))
+            .build();
+
+        assert_eq!(
+            installation.display_name.as_deref(),
+            Some("R 4.3.3 (Conda)")
+        );
+    }
+
+    #[test]
+    fn builder_prefers_rversions_label_over_generated_display_name() {
+        let installation = RInstallationBuilder::new(Some(RInstallationKind::Conda))
+            .display_name(Some("Legacy Conda label".to_string()))
+            .version(Some("4.3.3".to_string()))
+            .name(Some("seurat4".to_string()))
+            .rversions_overlay(Some(RVersionsOverlay {
+                label: Some("Production R".to_string()),
+                script: None,
+                repo: None,
+                library: None,
+                module: None,
+                module_startup_command: None,
+            }))
+            .build();
+
+        assert_eq!(installation.display_name.as_deref(), Some("Production R"));
     }
 
     #[test]

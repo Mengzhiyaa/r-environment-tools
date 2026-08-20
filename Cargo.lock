@@ -736,6 +736,8 @@ version = "0.1.2"
 dependencies = [
  "ret-core",
  "ret-r-utils",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -745,6 +747,7 @@ dependencies = [
  "ret-core",
  "ret-fs",
  "ret-r-utils",
+ "tempfile",
 ]
 
 [[package]]

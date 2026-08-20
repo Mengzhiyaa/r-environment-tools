@@ -46,7 +46,13 @@ impl Locator for Scoop {
         env.version.as_ref()?;
 
         let home = env.home.clone()?;
-        if !looks_like_scoop_path(&env.executable) && !looks_like_scoop_path(&home) {
+        if !looks_like_scoop_path(&env.executable)
+            && !looks_like_scoop_path(&home)
+            && !self
+                .install_roots
+                .iter()
+                .any(|root| env.executable.starts_with(root) || home.starts_with(root))
+        {
             return None;
         }
 
@@ -107,8 +113,8 @@ impl Locator for Scoop {
 
 fn scoop_install_roots(environment: &dyn Environment) -> Vec<PathBuf> {
     let mut roots = vec![];
-    if let Some(home) = environment.get_user_home() {
-        let apps = home.join("scoop").join("apps");
+    for base in scoop_base_roots(environment) {
+        let apps = base.join("apps");
         roots.push(apps.join("r"));
         roots.push(apps.join("r-base"));
     }
@@ -117,16 +123,49 @@ fn scoop_install_roots(environment: &dyn Environment) -> Vec<PathBuf> {
     roots
 }
 
-fn scoop_manager(environment: &dyn Environment) -> Option<EnvManager> {
-    let home = environment.get_user_home()?;
+fn scoop_base_roots(environment: &dyn Environment) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
 
-    for candidate in [
-        home.join("scoop").join("shims").join("scoop.cmd"),
-        home.join("scoop").join("shims").join("scoop.ps1"),
-        home.join("scoop").join("shims").join("scoop"),
-    ] {
-        if candidate.exists() {
-            return Some(EnvManager::new(candidate, EnvManagerType::Scoop, None));
+    if let Some(root) = environment.get_env_var("SCOOP".to_string()) {
+        roots.push(PathBuf::from(root));
+    }
+    if let Some(root) = environment.get_env_var("SCOOP_GLOBAL".to_string()) {
+        roots.push(PathBuf::from(root));
+    }
+    if let Some(home) = environment.get_user_home() {
+        roots.push(home.join("scoop"));
+
+        let config_home = environment
+            .get_env_var("XDG_CONFIG_HOME".to_string())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        let config_path = config_home.join("scoop").join("config.json");
+        if let Ok(content) = fs::read_to_string(config_path) {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                for key in ["root_path", "global_path"] {
+                    if let Some(path) = config.get(key).and_then(|value| value.as_str()) {
+                        roots.push(PathBuf::from(path));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(program_data) = environment.get_env_var("ProgramData".to_string()) {
+        roots.push(PathBuf::from(program_data).join("scoop"));
+    }
+
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn scoop_manager(environment: &dyn Environment) -> Option<EnvManager> {
+    for root in scoop_base_roots(environment) {
+        for name in ["scoop.cmd", "scoop.ps1", "scoop"] {
+            let candidate = root.join("shims").join(name);
+            if candidate.exists() {
+                return Some(EnvManager::new(candidate, EnvManagerType::Scoop, None));
+            }
         }
     }
 
@@ -142,8 +181,35 @@ fn looks_like_scoop_path(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_scoop_path;
-    use std::path::Path;
+    use super::{looks_like_scoop_path, scoop_base_roots, scoop_install_roots};
+    use ret_core::os_environment::Environment;
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
+
+    struct TestEnvironment {
+        home: PathBuf,
+        variables: HashMap<String, String>,
+    }
+
+    impl Environment for TestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            Some(self.home.clone())
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, key: String) -> Option<String> {
+            self.variables.get(&key).cloned()
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
 
     #[test]
     fn recognizes_scoop_paths() {
@@ -156,5 +222,42 @@ mod tests {
         assert!(!looks_like_scoop_path(Path::new(
             r"C:\Program Files\R\R-4.4.1\bin\R.exe"
         )));
+    }
+
+    #[test]
+    fn includes_user_global_environment_and_configured_roots() {
+        let temp = tempfile::tempdir().expect("failed to create temp directory");
+        let config_home = temp.path().join("config");
+        let config_dir = config_home.join("scoop");
+        std::fs::create_dir_all(&config_dir).expect("failed to create config directory");
+        std::fs::write(
+            config_dir.join("config.json"),
+            r#"{"root_path":"/configured/user","global_path":"/configured/global"}"#,
+        )
+        .expect("failed to write Scoop config");
+
+        let environment = TestEnvironment {
+            home: temp.path().join("home"),
+            variables: HashMap::from([
+                ("SCOOP".to_string(), "/env/user".to_string()),
+                ("SCOOP_GLOBAL".to_string(), "/env/global".to_string()),
+                (
+                    "XDG_CONFIG_HOME".to_string(),
+                    config_home.to_string_lossy().into_owned(),
+                ),
+                ("ProgramData".to_string(), "/program-data".to_string()),
+            ]),
+        };
+
+        let roots = scoop_base_roots(&environment);
+        assert!(roots.contains(&PathBuf::from("/env/user")));
+        assert!(roots.contains(&PathBuf::from("/env/global")));
+        assert!(roots.contains(&PathBuf::from("/configured/user")));
+        assert!(roots.contains(&PathBuf::from("/configured/global")));
+        assert!(roots.contains(&PathBuf::from("/program-data/scoop")));
+
+        let install_roots = scoop_install_roots(&environment);
+        assert!(install_roots.contains(&PathBuf::from("/configured/global/apps/r")));
+        assert!(install_roots.contains(&PathBuf::from("/env/user/apps/r-base")));
     }
 }

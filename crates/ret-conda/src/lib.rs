@@ -732,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn conda_identity_uses_structured_fields_instead_of_a_synthetic_display_name() {
+    fn conda_identity_generates_display_name_from_structured_fields() {
         let prefix = std::path::PathBuf::from("/opt/conda/envs/seurat4");
         let resolved = ResolvedRInstallation {
             executable: prefix.join("bin/R"),
@@ -746,21 +746,27 @@ mod tests {
         let installation =
             Conda::from(&EnvironmentApi::new()).build_installation(&prefix, resolved, None);
 
-        assert_eq!(installation.display_name, None);
+        assert_eq!(
+            installation.display_name.as_deref(),
+            Some("R 4.3.3 (Conda: seurat4)")
+        );
         assert_eq!(installation.name.as_deref(), Some("seurat4"));
         assert_eq!(installation.version.as_deref(), Some("4.3.3"));
         assert_eq!(installation.kind, Some(RInstallationKind::Conda));
     }
 
     #[test]
-    fn fast_conda_paths_preserve_structured_identity_without_a_display_name() {
+    fn fast_conda_paths_generate_display_name_from_structured_identity() {
         let (_temp_dir, prefix, executable) = create_conda_r_prefix();
         let environment = EnvironmentApi::new();
 
         let identified = Conda::from(&environment)
             .try_from(&REnv::new(executable.clone(), None, None))
             .expect("expected try_from to identify the Conda R installation");
-        assert_eq!(identified.display_name, None);
+        assert_eq!(
+            identified.display_name.as_deref(),
+            Some("R 4.3.3 (Conda: seurat4)")
+        );
         assert_eq!(identified.name.as_deref(), Some("seurat4"));
         assert_eq!(identified.version.as_deref(), Some("4.3.3"));
 
@@ -773,7 +779,10 @@ mod tests {
             .lock()
             .expect("installations mutex poisoned");
         assert_eq!(reported.len(), 1);
-        assert_eq!(reported[0].display_name, None);
+        assert_eq!(
+            reported[0].display_name.as_deref(),
+            Some("R 4.3.3 (Conda: seurat4)")
+        );
         assert_eq!(reported[0].name.as_deref(), Some("seurat4"));
         assert_eq!(reported[0].version.as_deref(), Some("4.3.3"));
     }

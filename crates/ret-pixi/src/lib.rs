@@ -4,11 +4,15 @@
 use ret_core::{
     arch::Architecture,
     env::REnv,
+    os_environment::{Environment, EnvironmentApi},
     r_installation::{LocatorMetadata, RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
     Locator, LocatorKind,
 };
-use ret_r_utils::executable::{filter_symlink_paths, find_executables};
+use ret_r_utils::{
+    env::ResolvedRInstallation,
+    executable::{filter_symlink_paths, find_executable, find_executables},
+};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -75,11 +79,19 @@ fn get_pixi_prefix(env: &REnv) -> Option<PathBuf> {
     None
 }
 
-pub struct Pixi {}
+pub struct Pixi {
+    global_env_dirs: Vec<PathBuf>,
+}
 
 impl Pixi {
     pub fn new() -> Pixi {
-        Pixi {}
+        Self::from(&EnvironmentApi::new())
+    }
+
+    pub fn from(environment: &dyn Environment) -> Pixi {
+        Pixi {
+            global_env_dirs: pixi_global_env_dirs(environment),
+        }
     }
 }
 
@@ -142,17 +154,83 @@ impl Locator for Pixi {
         )
     }
 
-    /// Pixi environments are workspace-local (`.pixi/envs/<name>/`).
-    /// They are discovered during workspace directory scanning in `find.rs`,
-    /// not via a global search. This method is intentionally empty.
-    fn find(&self, _reporter: &dyn Reporter) {}
+    fn find(&self, reporter: &dyn Reporter) {
+        for envs_dir in &self.global_env_dirs {
+            let Ok(entries) = fs::read_dir(envs_dir) else {
+                continue;
+            };
+            for prefix in entries.filter_map(Result::ok).map(|entry| entry.path()) {
+                if !is_pixi_env(&prefix) {
+                    continue;
+                }
+                let Some(executable) = find_executable(&prefix) else {
+                    continue;
+                };
+                if let Some(resolved) = ResolvedRInstallation::from(&executable) {
+                    let env = resolved.to_r_env();
+                    if let Some(installation) = self.try_from(&env) {
+                        resolved.add_to_cache(installation.clone());
+                        reporter.report_installation(&installation);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn pixi_global_env_dirs(environment: &dyn Environment) -> Vec<PathBuf> {
+    let pixi_home = environment
+        .get_env_var("PIXI_HOME".to_string())
+        .map(PathBuf::from)
+        .or_else(|| environment.get_user_home().map(|home| home.join(".pixi")));
+    pixi_home
+        .map(|home| vec![home.join("envs")])
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{get_pixi_prefix, infer_manifest_path, is_pixi_env};
-    use ret_core::Locator;
+    use super::{get_pixi_prefix, infer_manifest_path, is_pixi_env, pixi_global_env_dirs};
+    use ret_core::{os_environment::Environment, Locator};
     use std::path::PathBuf;
+
+    struct TestEnvironment {
+        pixi_home: Option<String>,
+    }
+
+    impl Environment for TestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            Some(PathBuf::from("/home/tester"))
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, key: String) -> Option<String> {
+            (key == "PIXI_HOME")
+                .then(|| self.pixi_home.clone())
+                .flatten()
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn global_env_dirs_use_pixi_home_or_user_default() {
+        assert_eq!(
+            pixi_global_env_dirs(&TestEnvironment {
+                pixi_home: Some("/srv/pixi".to_string())
+            }),
+            vec![PathBuf::from("/srv/pixi/envs")]
+        );
+        assert_eq!(
+            pixi_global_env_dirs(&TestEnvironment { pixi_home: None }),
+            vec![PathBuf::from("/home/tester/.pixi/envs")]
+        );
+    }
 
     #[test]
     fn pixi_env_detection() {
@@ -192,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn pixi_identity_uses_structured_fields_instead_of_a_synthetic_display_name() {
+    fn pixi_identity_generates_display_name_from_structured_fields() {
         let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
         let prefix = tmp.path().join(".pixi").join("envs").join("analysis");
         let conda_meta = prefix.join("conda-meta");
@@ -213,7 +291,10 @@ mod tests {
             .try_from(&env)
             .expect("expected a Pixi R installation");
 
-        assert_eq!(installation.display_name, None);
+        assert_eq!(
+            installation.display_name.as_deref(),
+            Some("R 4.4.2 (Pixi: analysis)")
+        );
         assert_eq!(installation.name.as_deref(), Some("analysis"));
         assert_eq!(installation.version.as_deref(), Some("4.4.2"));
     }

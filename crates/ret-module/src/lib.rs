@@ -39,6 +39,27 @@ impl EnvironmentModule {
             .map(|cmd| EnvManager::new(cmd.clone(), EnvManagerType::EnvironmentModule, None));
         EnvironmentModule { modulecmd, manager }
     }
+
+    fn installation_from_env(&self, env: &REnv) -> Option<RInstallation> {
+        env.version.as_ref()?;
+        let home = env.home.clone()?;
+        Some(
+            RInstallationBuilder::new(Some(RInstallationKind::EnvironmentModule))
+                .display_name(Some("Module R".to_string()))
+                .executable(Some(env.executable.clone()))
+                .home(Some(home))
+                .version(env.version.clone())
+                .arch(
+                    env.arch
+                        .clone()
+                        .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
+                )
+                .manager(self.manager.clone())
+                .known_executables(env.known_executables.clone())
+                .symlinks(env.symlinks.clone())
+                .build(),
+        )
+    }
 }
 
 impl Locator for EnvironmentModule {
@@ -62,22 +83,7 @@ impl Locator for EnvironmentModule {
             return None;
         }
 
-        Some(
-            RInstallationBuilder::new(Some(RInstallationKind::EnvironmentModule))
-                .display_name(Some("Module R".to_string()))
-                .executable(Some(env.executable.clone()))
-                .home(Some(home))
-                .version(env.version.clone())
-                .arch(
-                    env.arch
-                        .clone()
-                        .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
-                )
-                .manager(self.manager.clone())
-                .known_executables(env.known_executables.clone())
-                .symlinks(env.symlinks.clone())
-                .build(),
-        )
+        self.installation_from_env(env)
     }
 
     fn find(&self, reporter: &dyn Reporter) {
@@ -103,7 +109,9 @@ impl Locator for EnvironmentModule {
             if let Some(r_binary) = resolve_r_from_module(modulecmd, module_name) {
                 if let Some(resolved) = ResolvedRInstallation::from(&r_binary) {
                     let env = resolved.to_r_env();
-                    if let Some(installation) = self.try_from(&env) {
+                    // A successfully loaded module is authoritative; module
+                    // trees are not restricted to the common path names above.
+                    if let Some(installation) = self.installation_from_env(&env) {
                         let installation = RInstallationBuilder::from_installation(installation)
                             .startup_command(Some(build_module_startup_command(
                                 modulecmd,
@@ -222,27 +230,37 @@ fn list_r_modules(modulecmd: &Path) -> Vec<String> {
         String::from_utf8_lossy(&output.stderr).to_string()
     };
 
+    parse_r_modules(&text)
+}
+
+fn parse_r_modules(text: &str) -> Vec<String> {
     text.lines()
-        .map(|line| line.trim())
-        // Filter lines that look like R modules: R/x.y.z or R-x.y.z
-        .filter(|line| {
-            let lower = line.to_ascii_lowercase();
-            (lower.starts_with("r/") || lower.starts_with("r-"))
-                && !lower.starts_with("r-lib")
-                && !lower.starts_with("r-base")
-                && !lower.starts_with("rstudio")
-        })
-        // Remove trailing markers like "(default)" or "(D)"
-        .map(|line| {
-            line.split_whitespace()
-                .next()
-                .unwrap_or(line)
+        .filter_map(|line| {
+            let name = line
+                .split_whitespace()
+                .next()?
                 .trim_end_matches("(default)")
-                .trim_end_matches("(D)")
-                .to_string()
+                .trim_end_matches("(D)");
+            is_r_module_name(name).then(|| name.to_string())
         })
-        .filter(|s| !s.is_empty())
         .collect()
+}
+
+fn is_r_module_name(name: &str) -> bool {
+    let components = name.split('/').collect::<Vec<_>>();
+    components.windows(2).any(|pair| {
+        pair[0].eq_ignore_ascii_case("r")
+            && pair[1]
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_digit())
+    }) || components.last().is_some_and(|component| {
+        component
+            .to_ascii_lowercase()
+            .strip_prefix("r-")
+            .and_then(|version| version.chars().next())
+            .is_some_and(|character| character.is_ascii_digit())
+    })
 }
 
 /// Resolve the R binary from loading a module.
@@ -292,5 +310,38 @@ mod tests {
         assert!(looks_like_module_path(Path::new("/modules/R/4.3.0/bin/R")));
         assert!(!looks_like_module_path(Path::new("/usr/bin/R")));
         assert!(!looks_like_module_path(Path::new("/opt/R/4.3.0/bin/R")));
+    }
+
+    #[test]
+    fn parses_nested_r_module_names() {
+        let modules = super::parse_r_modules(
+            "R/4.4.1 (default)\nlang/R/4.3.3 (D)\ncompiler/R/4.2\nr-4.1\nr-base/4.4\nr-ggplot2/3.5\nrstudio/2024",
+        );
+
+        assert_eq!(
+            modules,
+            vec!["R/4.4.1", "lang/R/4.3.3", "compiler/R/4.2", "r-4.1"]
+        );
+    }
+
+    #[test]
+    fn loaded_modules_accept_custom_install_paths() {
+        let locator = super::EnvironmentModule {
+            modulecmd: None,
+            manager: None,
+        };
+        let env = ret_core::env::REnv::new(
+            std::path::PathBuf::from("/cluster/toolchains/r/4.4/bin/R"),
+            Some(std::path::PathBuf::from("/cluster/toolchains/r/4.4/lib/R")),
+            Some("4.4.1".to_string()),
+        );
+
+        let installation = locator
+            .installation_from_env(&env)
+            .expect("loaded module path should be authoritative");
+        assert_eq!(
+            installation.kind,
+            Some(ret_core::r_installation::RInstallationKind::EnvironmentModule)
+        );
     }
 }

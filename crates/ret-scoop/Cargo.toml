@@ -7,3 +7,7 @@ license.workspace = true
 [dependencies]
 ret-core = { path = "../ret-core" }
 ret-r-utils = { path = "../ret-r-utils" }
+serde_json = "1.0.93"
+
+[dev-dependencies]
+tempfile = "3.14.0"

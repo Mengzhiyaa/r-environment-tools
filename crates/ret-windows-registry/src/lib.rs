@@ -25,6 +25,25 @@ impl WindowsRegistry {
             reported_executables: Arc::new(LocatorCache::new()),
         }
     }
+
+    fn installation_from_env(&self, env: &REnv) -> Option<RInstallation> {
+        let home = env.home.clone()?;
+        Some(
+            RInstallationBuilder::new(Some(RInstallationKind::WindowsRegistry))
+                .display_name(Some("Windows Registry R".to_string()))
+                .executable(Some(env.executable.clone()))
+                .home(Some(home))
+                .version(env.version.clone())
+                .arch(
+                    env.arch
+                        .clone()
+                        .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
+                )
+                .known_executables(env.known_executables.clone())
+                .symlinks(env.symlinks.clone())
+                .build(),
+        )
+    }
 }
 
 impl Default for WindowsRegistry {
@@ -78,26 +97,16 @@ impl Locator for WindowsRegistry {
             return None;
         }
 
-        let home = env.home.clone()?;
-        if !looks_like_windows_r_path(&home) {
+        if let Some(installation) = self.reported_executables.get(&env.executable) {
+            return Some(installation);
+        }
+
+        let home = env.home.as_ref()?;
+        if !looks_like_windows_r_path(home) {
             return None;
         }
 
-        Some(
-            RInstallationBuilder::new(Some(RInstallationKind::WindowsRegistry))
-                .display_name(Some("Windows Registry R".to_string()))
-                .executable(Some(env.executable.clone()))
-                .home(Some(home))
-                .version(env.version.clone())
-                .arch(
-                    env.arch
-                        .clone()
-                        .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
-                )
-                .known_executables(env.known_executables.clone())
-                .symlinks(env.symlinks.clone())
-                .build(),
-        )
+        self.installation_from_env(env)
     }
 
     fn find(&self, reporter: &dyn Reporter) {
@@ -109,7 +118,9 @@ impl Locator for WindowsRegistry {
         for executable in registry_installations() {
             if let Some(resolved) = ResolvedRInstallation::from(&executable) {
                 let env = resolved.to_r_env();
-                if let Some(installation) = self.try_from(&env) {
+                // InstallPath is authoritative here. It may point outside the
+                // installer's usual Program Files directory.
+                if let Some(installation) = self.installation_from_env(&env) {
                     resolved.add_to_cache(installation.clone());
                     if let Some(executable) = installation.executable.clone() {
                         self.reported_executables
@@ -188,4 +199,27 @@ fn collect_installations_from_key(
 #[cfg(not(windows))]
 fn registry_installations() -> Vec<PathBuf> {
     vec![]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WindowsRegistry;
+    use ret_core::{env::REnv, r_installation::RInstallationKind};
+    use std::path::PathBuf;
+
+    #[test]
+    fn registry_entries_accept_custom_install_paths() {
+        let locator = WindowsRegistry::new();
+        let env = REnv::new(
+            PathBuf::from(r"D:\Apps\R-4.4.1\bin\x64\R.exe"),
+            Some(PathBuf::from(r"D:\Apps\R-4.4.1")),
+            Some("4.4.1".to_string()),
+        );
+
+        let installation = locator
+            .installation_from_env(&env)
+            .expect("registry entry should be authoritative");
+        assert_eq!(installation.kind, Some(RInstallationKind::WindowsRegistry));
+        assert_eq!(installation.home, env.home);
+    }
 }

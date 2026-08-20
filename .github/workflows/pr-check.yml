@@ -158,7 +158,7 @@ jobs:
         include:
           - feature: ci-homebrew-container
             os: ubuntu-latest
-            image: homebrew/brew
+            image: ghcr.io/homebrew/brew:latest
             target: x86_64-unknown-linux-musl
     steps:
       - name: Checkout
@@ -166,10 +166,8 @@ jobs:
 
       # Homebrew R (Linuxbrew)
       - name: Homebrew R
-        if: startsWith(matrix.image, 'homebrew')
-        run: |
-          brew update || true
-          brew install r
+        if: contains(matrix.image, 'homebrew/brew')
+        run: brew install r
         shell: bash
 
       - name: Verify R installation

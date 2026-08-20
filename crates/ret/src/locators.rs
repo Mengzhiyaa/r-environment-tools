@@ -44,10 +44,10 @@ pub fn create_locators_with_conda(
 
     // Pixi must come before Conda so its environments are not
     // misidentified as plain Conda environments.
-    locators.push(Arc::new(Pixi::new()));
+    locators.push(Arc::new(Pixi::from(environment)));
     locators.push(conda);
 
-    locators.push(Arc::new(Rig::new()));
+    locators.push(Arc::new(Rig::from(environment)));
 
     if cfg!(unix) {
         locators.push(Arc::new(Homebrew::from(environment)));

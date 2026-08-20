@@ -101,11 +101,11 @@ interface RInstallation {
 }
 ```
 
-`displayName` is reserved for a custom label supplied by an external source
-(for example, an r-versions entry). Manager-backed installations expose their
-identity through `kind`, `name`, and `version`; clients can therefore format a
-Conda installation as `R 4.3.3 (Conda: seurat4)` without parsing a preformatted
-label.
+`displayName` contains the final user-facing label. Conda and Pixi labels are
+derived from `kind`, `name`, and `version`, for example
+`R 4.3.3 (Conda: seurat4)`. A custom label supplied by an external source (for
+example, an r-versions entry) takes precedence over the derived label. The
+structured fields remain available to clients that need custom presentation.
 
 ## Example Installation Payloads
 

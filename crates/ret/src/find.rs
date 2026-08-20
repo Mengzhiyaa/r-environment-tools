@@ -281,58 +281,47 @@ pub fn find_r_installations_in_directory_recursive(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     global_search_paths: &[PathBuf],
 ) {
-    let mut paths_to_search_first = vec![
-        directory.to_path_buf(),
-        directory.join("bin"),
-        directory.join("lib").join("R"),
-        directory.join("lib").join("R").join("bin"),
-        directory.join("Resources"),
-        directory.join("Resources").join("bin"),
-    ];
+    let mut paths_to_search = Vec::new();
+    collect_recursive_search_paths(directory, &mut paths_to_search);
+    paths_to_search.sort();
+    paths_to_search.dedup();
 
-    // Add all subdirectories of .pixi/envs/** so Pixi environments
-    // in the workspace are discovered.
-    if let Ok(reader) = fs::read_dir(directory.join(".pixi").join("envs")) {
-        reader
-            .filter_map(Result::ok)
-            .filter(|d| d.path().is_dir())
-            .map(|p| p.path())
-            .for_each(|p| paths_to_search_first.push(p));
-    }
-
-    paths_to_search_first.sort();
-    paths_to_search_first.dedup();
-
-    find_r_installations_in_paths(
-        &paths_to_search_first,
-        reporter,
-        locators,
-        true,
-        global_search_paths,
-        DiscoverySource::ExplicitSearch,
-    );
-
-    // If this is a conda or pixi env folder itself, do not recurse further.
-    if is_conda_env(directory) || is_pixi_env(directory) {
-        return;
-    }
-
-    if let Ok(reader) = fs::read_dir(directory) {
-        let subdirectories = reader
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
-            .map(|entry| entry.path())
-            .filter(should_search_for_installations_in_path)
-            .collect::<Vec<_>>();
-
+    // Keep the existing parallel probing bounded for large workspace trees.
+    for paths in paths_to_search.chunks(64) {
         find_r_installations_in_paths(
-            &subdirectories,
+            paths,
             reporter,
             locators,
             true,
             global_search_paths,
             DiscoverySource::ExplicitSearch,
         );
+    }
+}
+
+fn collect_recursive_search_paths(directory: &PathBuf, paths: &mut Vec<PathBuf>) {
+    paths.extend([
+        directory.to_path_buf(),
+        directory.join("bin"),
+        directory.join("lib").join("R"),
+        directory.join("lib").join("R").join("bin"),
+        directory.join("Resources"),
+        directory.join("Resources").join("bin"),
+    ]);
+
+    // Environment prefixes are terminal nodes; searching inside package
+    // directories would only rediscover the same installation.
+    if is_conda_env(directory) || is_pixi_env(directory) {
+        return;
+    }
+    if let Ok(reader) = fs::read_dir(directory) {
+        for entry in reader.filter_map(Result::ok) {
+            let is_directory = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            let path = entry.path();
+            if is_directory && should_search_for_installations_in_path(&path) {
+                collect_recursive_search_paths(&path, paths);
+            }
+        }
     }
 }
 
@@ -397,5 +386,39 @@ pub fn identify_r_executables_using_locators(
         } else {
             warn!("Unknown R installation {:?}", executable);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_recursive_search_paths;
+
+    #[test]
+    fn recursive_search_reaches_deep_installation_directories() {
+        let temp = tempfile::tempdir().expect("failed to create temp directory");
+        let r_home = temp
+            .path()
+            .join("toolchains")
+            .join("stable")
+            .join("lib")
+            .join("R");
+        std::fs::create_dir_all(&r_home).expect("failed to create nested R home");
+
+        let mut paths = Vec::new();
+        collect_recursive_search_paths(&temp.path().to_path_buf(), &mut paths);
+
+        assert!(paths.contains(&r_home));
+    }
+
+    #[test]
+    fn recursive_search_skips_ignored_dependency_trees() {
+        let temp = tempfile::tempdir().expect("failed to create temp directory");
+        let ignored = temp.path().join("node_modules").join("package");
+        std::fs::create_dir_all(&ignored).expect("failed to create ignored directory");
+
+        let mut paths = Vec::new();
+        collect_recursive_search_paths(&temp.path().to_path_buf(), &mut paths);
+
+        assert!(!paths.iter().any(|path| path.starts_with(&ignored)));
     }
 }

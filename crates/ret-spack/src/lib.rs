@@ -16,6 +16,7 @@ use ret_r_utils::{
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
 };
 
@@ -56,38 +57,12 @@ impl Spack {
             reporter.report_installation(&installation);
         }
     }
-}
 
-impl Locator for Spack {
-    fn get_kind(&self) -> LocatorKind {
-        LocatorKind::Spack
-    }
-
-    fn refresh_state(&self) -> RefreshStatePersistence {
-        RefreshStatePersistence::SelfHydratingCache
-    }
-
-    fn supported_categories(&self) -> Vec<RInstallationKind> {
-        vec![RInstallationKind::Spack]
-    }
-
-    fn try_from(&self, env: &REnv) -> Option<RInstallation> {
-        if cfg!(windows) {
-            return None;
-        }
-
+    fn installation_from_env(&self, env: &REnv) -> Option<RInstallation> {
         env.version.as_ref()?;
-
         let resolved_executable =
             resolve_any_symlink(&env.executable).unwrap_or(env.executable.clone());
         let home = env.home.clone()?;
-        if !looks_like_spack_path(&resolved_executable)
-            && !looks_like_spack_path(&env.executable)
-            && !looks_like_spack_path(&home)
-        {
-            return None;
-        }
-
         let mut extra_executables = vec![env.executable.clone(), resolved_executable.clone()];
         if let Some(parent) = env.executable.parent() {
             extra_executables.extend(find_executables(parent));
@@ -114,6 +89,49 @@ impl Locator for Spack {
                 .build(),
         )
     }
+}
+
+impl Locator for Spack {
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::Spack
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
+    }
+
+    fn supported_categories(&self) -> Vec<RInstallationKind> {
+        vec![RInstallationKind::Spack]
+    }
+
+    fn try_from(&self, env: &REnv) -> Option<RInstallation> {
+        if cfg!(windows) {
+            return None;
+        }
+
+        env.version.as_ref()?;
+
+        if let Some(installation) = self.reported_executables.get(&env.executable) {
+            return Some(installation);
+        }
+
+        let resolved_executable =
+            resolve_any_symlink(&env.executable).unwrap_or(env.executable.clone());
+        let home = env.home.as_ref()?;
+        if !looks_like_spack_path(&resolved_executable)
+            && !looks_like_spack_path(&env.executable)
+            && !looks_like_spack_path(home)
+            && !self.opt_dirs.iter().any(|root| {
+                resolved_executable.starts_with(root)
+                    || env.executable.starts_with(root)
+                    || home.starts_with(root)
+            })
+        {
+            return None;
+        }
+
+        self.installation_from_env(env)
+    }
 
     fn find(&self, reporter: &dyn Reporter) {
         if cfg!(windows) {
@@ -121,64 +139,88 @@ impl Locator for Spack {
         }
 
         self.reported_executables.clear();
+        let mut prefixes = self
+            .manager
+            .as_ref()
+            .map(spack_prefixes_from_manager)
+            .unwrap_or_default();
         for opt_dir in &self.opt_dirs {
-            if !opt_dir.is_dir() {
-                continue;
-            }
+            prefixes.extend(spack_prefixes_in_tree(opt_dir));
+        }
+        prefixes.sort();
+        prefixes.dedup();
 
-            // Spack layout: <opt_dir>/<platform>/<compiler>/r-<version>/bin/R
-            // We need to walk through platform dirs, then compiler dirs, then r-* dirs.
-            let Ok(platform_dirs) = fs::read_dir(opt_dir) else {
-                continue;
-            };
-            for platform_entry in platform_dirs.filter_map(Result::ok) {
-                let platform_path = platform_entry.path();
-                if !platform_path.is_dir() {
+        for prefix in prefixes {
+            for executable in find_executables(&prefix) {
+                if self.reported_executables.contains_key(&executable) {
                     continue;
                 }
-                let Ok(compiler_dirs) = fs::read_dir(&platform_path) else {
-                    continue;
-                };
-                for compiler_entry in compiler_dirs.filter_map(Result::ok) {
-                    let compiler_path = compiler_entry.path();
-                    if !compiler_path.is_dir() {
-                        continue;
-                    }
-                    let Ok(package_dirs) = fs::read_dir(&compiler_path) else {
-                        continue;
-                    };
-                    for package_entry in package_dirs.filter_map(Result::ok) {
-                        let package_name = package_entry.file_name();
-                        let name = package_name.to_string_lossy();
-                        if !name.starts_with("r-") || name.starts_with("r-lib") {
-                            continue;
-                        }
-                        // Only match the R base package, not R packages like r-ggplot2.
-                        // r-<version> but not r-<packagename>-<version>.
-                        // The version part starts with a digit.
-                        let suffix = &name[2..];
-                        if !suffix.starts_with(|c: char| c.is_ascii_digit()) {
-                            continue;
-                        }
-
-                        let package_path = package_entry.path();
-                        for executable in find_executables(&package_path) {
-                            if self.reported_executables.contains_key(&executable) {
-                                continue;
-                            }
-                            if let Some(resolved) = ResolvedRInstallation::from(&executable) {
-                                let env = resolved.to_r_env();
-                                if let Some(installation) = self.try_from(&env) {
-                                    resolved.add_to_cache(installation.clone());
-                                    self.insert_and_report(installation, Some(reporter));
-                                }
-                            }
-                        }
+                if let Some(resolved) = ResolvedRInstallation::from(&executable) {
+                    let env = resolved.to_r_env();
+                    // Prefixes returned by Spack are authoritative even when
+                    // install_tree uses a custom root or projection.
+                    if let Some(installation) = self.installation_from_env(&env) {
+                        resolved.add_to_cache(installation.clone());
+                        self.insert_and_report(installation, Some(reporter));
                     }
                 }
             }
         }
     }
+}
+
+fn spack_prefixes_from_manager(manager: &EnvManager) -> Vec<PathBuf> {
+    let Ok(output) = Command::new(&manager.executable)
+        .args(["find", "--paths", "r"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_spack_find_paths(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_spack_find_paths(output: &str) -> Vec<PathBuf> {
+    let mut paths = output
+        .lines()
+        .filter_map(|line| line.split_whitespace().last())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn spack_prefixes_in_tree(root: &Path) -> Vec<PathBuf> {
+    let mut prefixes = Vec::new();
+    let mut directories = vec![(root.to_path_buf(), 0usize)];
+
+    while let Some((directory, depth)) = directories.pop() {
+        if !find_executables(&directory).is_empty() {
+            prefixes.push(directory);
+            continue;
+        }
+        if depth == 3 {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        directories.extend(entries.filter_map(Result::ok).filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(|kind| kind.is_dir())
+                .map(|_| (entry.path(), depth + 1))
+        }));
+    }
+
+    prefixes.sort();
+    prefixes.dedup();
+    prefixes
 }
 
 fn looks_like_spack_path(path: &Path) -> bool {
@@ -244,9 +286,12 @@ fn find_spack_manager(environment: &dyn Environment) -> Option<EnvManager> {
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use super::looks_like_spack_path;
+    use super::{looks_like_spack_path, parse_spack_find_paths, spack_prefixes_in_tree};
     #[cfg(unix)]
-    use std::path::Path;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     #[cfg(unix)]
     #[test]
@@ -259,5 +304,35 @@ mod tests {
         )));
         assert!(!looks_like_spack_path(Path::new("/usr/local/bin/R")));
         assert!(!looks_like_spack_path(Path::new("/opt/R/4.4.1/bin/R")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parses_custom_prefixes_reported_by_spack() {
+        let paths = parse_spack_find_paths(
+            "-- linux-ubuntu22.04-x86_64 / gcc@13 --\nr@4.4.1  abcdefg  /srv/runtimes/R/4.4.1\n",
+        );
+
+        assert_eq!(paths, vec![PathBuf::from("/srv/runtimes/R/4.4.1")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finds_current_and_legacy_install_tree_layouts() {
+        let temp = tempfile::tempdir().expect("failed to create temp directory");
+        let current = temp.path().join("linux-x86_64").join("r-4.4.1-hash");
+        let legacy = temp
+            .path()
+            .join("linux-ubuntu-x86_64")
+            .join("gcc-13")
+            .join("r-4.3.3-hash");
+        for prefix in [&current, &legacy] {
+            fs::create_dir_all(prefix.join("bin")).expect("failed to create Spack prefix");
+            fs::write(prefix.join("bin").join("R"), "").expect("failed to create fake R");
+        }
+
+        let prefixes = spack_prefixes_in_tree(temp.path());
+        assert!(prefixes.contains(&current));
+        assert!(prefixes.contains(&legacy));
     }
 }

@@ -199,7 +199,11 @@ pub fn parse_rversions_file(content: &str) -> Vec<RVersionsEntry> {
         }
 
         let Some((key, value)) = trimmed_line.split_once(':') else {
-            warn!("Invalid line in r-versions file (no colon): {trimmed_line}");
+            finish_entry(&mut current, &mut entries);
+            entries.push(RVersionsEntry {
+                path: Some(PathBuf::from(trimmed_line)),
+                ..RVersionsEntry::default()
+            });
             continue;
         };
 
@@ -407,6 +411,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_plain_path_entries() {
+        let entries = parse_rversions_file("/opt/R/4.3.0/lib/R\n/opt/R/4.4.0/lib/R");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, Some(PathBuf::from("/opt/R/4.3.0/lib/R")));
+        assert_eq!(entries[1].path, Some(PathBuf::from("/opt/R/4.4.0/lib/R")));
+    }
+
+    #[test]
+    fn plain_paths_separate_extended_entries() {
+        let entries =
+            parse_rversions_file("Path: /opt/R/4.3.0/lib/R\nLabel: Production\n/opt/R/4.4.0/lib/R");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].label.as_deref(), Some("Production"));
+        assert_eq!(entries[1].path, Some(PathBuf::from("/opt/R/4.4.0/lib/R")));
+    }
+
+    #[test]
     fn parses_multiple_entries_with_multiple_blank_lines() {
         let entries = parse_rversions_file(
             "Path: /opt/R/4.3.0/lib/R\n\n\nPath: /opt/R/4.4.0/lib/R\nLabel: Production\n",
@@ -476,9 +499,9 @@ mod tests {
     }
 
     #[test]
-    fn ignores_comments_and_invalid_lines() {
+    fn ignores_comments_and_unknown_fields() {
         let entries = parse_rversions_file(
-            "# comment\nPath: /opt/R/4.3.0/lib/R\nThis line has no colon\n\n# another\nModule: R/4.4.0",
+            "# comment\nPath: /opt/R/4.3.0/lib/R\nUnknown: value\n\n# another\nModule: R/4.4.0",
         );
 
         assert_eq!(entries.len(), 2);
