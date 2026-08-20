@@ -52,7 +52,7 @@ fn discover_all_installations() -> Vec<RInstallation> {
 
     let reporter = Arc::new(collect::create_reporter());
     let cache_reporter = CacheReporter::new(reporter.clone());
-    find_and_report_installations(&cache_reporter, config, &locators, &environment, None);
+    find_and_report_installations(&cache_reporter, config, &locators, &environment, None, None);
     drop(cache_reporter);
 
     let installations = reporter

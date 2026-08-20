@@ -7,7 +7,7 @@ use ret_core::{
     env::REnv,
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use ret_r_utils::env::ResolvedRInstallation;
 use std::{
@@ -36,6 +36,37 @@ impl Default for WindowsRegistry {
 impl Locator for WindowsRegistry {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::WindowsRegistry
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SyncedDiscoveryState
+    }
+
+    fn sync_refresh_state_from(&self, source: &dyn Locator, scope: &RefreshStateSyncScope) {
+        let source = source
+            .as_any()
+            .downcast_ref::<WindowsRegistry>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "attempted to sync WindowsRegistry state from {:?}",
+                    source.get_kind()
+                )
+            });
+
+        match scope {
+            RefreshStateSyncScope::Full => {
+                self.reported_executables.clear();
+                self.reported_executables
+                    .insert_many(source.reported_executables.clone_map());
+            }
+            RefreshStateSyncScope::GlobalFiltered(kind)
+                if self.supported_categories().contains(kind) =>
+            {
+                self.reported_executables
+                    .insert_many(source.reported_executables.clone_map());
+            }
+            RefreshStateSyncScope::GlobalFiltered(_) | RefreshStateSyncScope::Workspace => {}
+        }
     }
 
     fn supported_categories(&self) -> Vec<RInstallationKind> {

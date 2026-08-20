@@ -175,10 +175,8 @@ fn infer_fallback_kind(
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
-    #![cfg(unix)]
-
     use super::identify_r_installation_using_locators;
     use ret_core::{
         arch::Architecture,
@@ -329,7 +327,7 @@ mod tests {
 
         assert_eq!(installation.display_name.as_deref(), Some("Production R"));
         assert_eq!(installation.kind, Some(RInstallationKind::Homebrew));
-        assert!(matches!(installation.locator_metadata, None));
+        assert!(installation.locator_metadata.is_none());
         assert_eq!(
             installation
                 .rversions_overlay

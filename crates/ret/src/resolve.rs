@@ -103,9 +103,7 @@ fn infer_fallback_kind(
     executable: &std::path::Path,
     global_search_paths: &[PathBuf],
 ) -> Option<RInstallationKind> {
-    let Some(bin) = executable.parent() else {
-        return None;
-    };
+    let bin = executable.parent()?;
     if global_search_paths.contains(&bin.to_path_buf()) {
         Some(RInstallationKind::GlobalPaths)
     } else {

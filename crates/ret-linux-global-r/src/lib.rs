@@ -7,7 +7,7 @@ use ret_core::{
     env::REnv,
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence,
 };
 use ret_r_utils::{env::ResolvedRInstallation, executable::find_executables};
 use std::{
@@ -102,6 +102,10 @@ impl Default for LinuxGlobalR {
 impl Locator for LinuxGlobalR {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::LinuxGlobal
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
     }
 
     fn supported_categories(&self) -> Vec<RInstallationKind> {

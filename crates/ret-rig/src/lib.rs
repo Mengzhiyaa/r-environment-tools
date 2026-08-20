@@ -7,7 +7,7 @@ use ret_core::{
     manager::{EnvManager, EnvManagerType},
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
-    Configuration, Locator, LocatorKind,
+    Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
 use ret_r_utils::env::ResolvedRInstallation;
 use std::{
@@ -39,13 +39,13 @@ impl Locator for Rig {
         LocatorKind::Rig
     }
 
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::ConfiguredOnly
+    }
+
     fn configure(&self, config: &Configuration) {
-        if let Some(executable) = &config.rig_executable {
-            self.rig_executable
-                .write()
-                .unwrap()
-                .replace(executable.clone());
-        }
+        *self.rig_executable.write().unwrap() =
+            config.rig_executable.clone().or_else(find_rig_executable);
     }
 
     fn supported_categories(&self) -> Vec<RInstallationKind> {

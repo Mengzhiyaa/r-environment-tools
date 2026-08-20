@@ -249,6 +249,7 @@ fn refresh_search_paths_override_configured_directories() {
         }),
     );
     assert!(refresh_result["duration"].as_u64().is_some());
+    assert!(refresh_result["refreshId"].as_u64().is_some());
 
     let installations = client.take_installations();
     assert!(
@@ -352,6 +353,9 @@ fn refresh_and_resolve_emit_telemetry_events() {
 
     let refresh_result = client.send_request("refresh", Value::Null);
     assert!(refresh_result["duration"].as_u64().is_some());
+    let refresh_id = refresh_result["refreshId"]
+        .as_u64()
+        .expect("refresh should return a refresh id");
     let _ = client.send_request("condaInfo", Value::Null);
 
     let telemetry = client.take_telemetry();
@@ -378,6 +382,22 @@ fn refresh_and_resolve_emit_telemetry_events() {
     assert!(
         event_names.contains(&"RefreshPerformance"),
         "refresh should emit performance telemetry"
+    );
+    let progress = telemetry
+        .iter()
+        .filter(|item| item["event"] == "RefreshProgress")
+        .collect::<Vec<_>>();
+    assert!(
+        !progress.is_empty(),
+        "refresh should emit progress telemetry"
+    );
+    assert!(progress
+        .iter()
+        .all(|item| { item["data"]["refreshProgress"]["refreshId"].as_u64() == Some(refresh_id) }));
+    let progress_json = serde_json::to_string(&progress).expect("failed to serialize progress");
+    assert!(
+        !progress_json.contains(workspace.root().to_string_lossy().as_ref()),
+        "progress telemetry must not contain workspace paths"
     );
 
     let _ = client.send_request("resolve", json!({ "executable": mismatched.executable }));

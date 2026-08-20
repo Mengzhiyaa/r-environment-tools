@@ -2,11 +2,7 @@ name: Coverage
 
 on:
   pull_request:
-    branches:
-      - main
-      - release*
-      - release/*
-      - release-*
+    branches: [main, "release*", "release/*", "release-*"]
 
 permissions:
   actions: read
@@ -23,43 +19,39 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            platform: Linux
+            comment_header: coverage-linux
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            platform: Windows
+            comment_header: coverage-windows
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Post Coverage Started Comment (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate snapshot comparator
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        shell: bash
+
+      - name: Post coverage started comment
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          header: coverage-linux
+          header: ${{ matrix.comment_header }}
           message: |
-            ## Test Coverage Report (Linux)
+            ## Coverage Report (${{ matrix.platform }})
 
-            :hourglass_flowing_sand: **Coverage analysis in progress...**
+            Comparing with exact base `${{ github.event.pull_request.base.sha }}`.
 
-            This comment will be updated with results when the analysis completes.
-
-      - name: Post Coverage Started Comment (Windows)
-        if: startsWith(matrix.os, 'windows')
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: coverage-windows
-          message: |
-            ## Test Coverage Report (Windows)
-
-            :hourglass_flowing_sand: **Coverage analysis in progress...**
-
-            This comment will be updated with results when the analysis completes.
-
-      # ── Install R ──
       - name: Install R
         uses: r-lib/actions/setup-r@v2
         with:
-          r-version: "release"
+          r-version: release
 
-      # ── Install Conda ──
       - name: Add Conda to PATH (Windows)
         if: startsWith(matrix.os, 'windows')
         run: |
@@ -71,14 +63,10 @@ jobs:
         run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
         shell: bash
 
-      - name: Check Conda version
-        run: conda info --all
-
       - name: Create Conda R environment
         run: conda create -n r-conda-env r-base -c conda-forge -y
 
-      # ── Rust + Coverage ──
-      - name: Rust Tool Chain setup
+      - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -87,142 +75,61 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
-
-      - name: Run Tests with Coverage
+      - name: Run tests with coverage
         run: cargo llvm-cov --features ci --lcov --output-path lcov.info -- --nocapture --test-threads=1
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: trace
         shell: bash
 
-      - name: Upload PR Coverage Results
+      - name: Upload PR coverage
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-pr-${{ matrix.os }}
           path: lcov.info
+          if-no-files-found: ignore
 
-      # ── Compare with Baseline ──
-      - name: Download Baseline Coverage
-        uses: dawidd6/action-download-artifact@v6
-        id: download-baseline
-        continue-on-error: true
-        with:
-          workflow: coverage-baseline.yml
-          branch: main
-          name: coverage-baseline-${{ matrix.os }}
-          path: baseline-coverage
-
-      - name: Generate Coverage Report (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
-        id: coverage-linux
-        run: |
-          PR_LINES=$(grep -c "^DA:" lcov.info || echo "0")
-          PR_HIT=$(grep "^DA:" lcov.info | cut -d, -f2 | awk '$1 > 0 { count++ } END { print count+0 }')
-
-          if [ -f baseline-coverage/lcov.info ]; then
-            BASELINE_LINES=$(grep -c "^DA:" baseline-coverage/lcov.info || echo "0")
-            BASELINE_HIT=$(grep "^DA:" baseline-coverage/lcov.info | cut -d, -f2 | awk '$1 > 0 { count++ } END { print count+0 }')
-          else
-            BASELINE_LINES=0
-            BASELINE_HIT=0
-          fi
-
-          if [ "$PR_LINES" -gt 0 ]; then
-            PR_PCT=$(echo "scale=1; ($PR_HIT * 100) / $PR_LINES" | bc)
-          else
-            PR_PCT="0"
-          fi
-
-          if [ "$BASELINE_LINES" -gt 0 ]; then
-            BASELINE_PCT=$(echo "scale=1; ($BASELINE_HIT * 100) / $BASELINE_LINES" | bc)
-          else
-            BASELINE_PCT="0"
-          fi
-
-          DELTA=$(echo "scale=1; $PR_PCT - $BASELINE_PCT" | bc)
-
-          if (( $(echo "$DELTA > 0" | bc -l) )); then
-            INDICATOR=":white_check_mark:"
-          elif (( $(echo "$DELTA < -1" | bc -l) )); then
-            INDICATOR=":warning:"
-          else
-            INDICATOR=":heavy_minus_sign:"
-          fi
-
-          echo "pr_pct=$PR_PCT" >> $GITHUB_OUTPUT
-          echo "pr_lines=$PR_LINES" >> $GITHUB_OUTPUT
-          echo "pr_hit=$PR_HIT" >> $GITHUB_OUTPUT
-          echo "baseline_pct=$BASELINE_PCT" >> $GITHUB_OUTPUT
-          echo "delta=$DELTA" >> $GITHUB_OUTPUT
-          echo "indicator=$INDICATOR" >> $GITHUB_OUTPUT
+      - name: Wait for exact-base coverage
+        if: always()
+        run: >-
+          python scripts/wait_for_baseline.py
+          --repository "${{ github.repository }}"
+          --workflow coverage-baseline.yml
+          --commit "${{ github.event.pull_request.base.sha }}"
+          --artifact "coverage-baseline-${{ matrix.os }}"
+          --timeout-seconds 1200
+          --poll-seconds 20
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
 
-      - name: Post Coverage Comment (Linux)
-        if: startsWith(matrix.os, 'ubuntu') && github.event_name == 'pull_request'
+      - name: Download exact-base coverage
+        if: always()
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: coverage-baseline.yml
+          commit: ${{ github.event.pull_request.base.sha }}
+          workflow_conclusion: success
+          name: coverage-baseline-${{ matrix.os }}
+          path: baseline-coverage
+          check_artifacts: true
+          search_artifacts: true
+
+      - name: Compare coverage snapshot
+        if: always()
+        run: >-
+          python scripts/quality_snapshot.py coverage
+          --current lcov.info
+          --baseline baseline-coverage/lcov.info
+          --platform "${{ matrix.platform }}"
+          --report coverage-report.md
+          --summary "$GITHUB_STEP_SUMMARY"
+        shell: bash
+
+      - name: Post coverage report
+        if: always() && hashFiles('coverage-report.md') != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          header: coverage-linux
-          message: |
-            ## Coverage Report (Linux) ${{ steps.coverage-linux.outputs.indicator }}
-
-            | Metric | PR | Baseline | Delta |
-            |--------|-----|----------|-------|
-            | Coverage | ${{ steps.coverage-linux.outputs.pr_pct }}% | ${{ steps.coverage-linux.outputs.baseline_pct }}% | ${{ steps.coverage-linux.outputs.delta }}% |
-            | Lines | ${{ steps.coverage-linux.outputs.pr_lines }} | - | - |
-            | Covered | ${{ steps.coverage-linux.outputs.pr_hit }} | - | - |
-
-            ---
-            <details>
-            <summary>Legend</summary>
-
-            - :white_check_mark: Coverage increased
-            - :heavy_minus_sign: No significant change
-            - :warning: Coverage decreased (>1%)
-            </details>
-
-      - name: Generate Coverage Report (Windows)
-        if: startsWith(matrix.os, 'windows')
-        id: coverage-windows
-        run: |
-          $prLines = (Select-String -Path "lcov.info" -Pattern "^DA:" | Measure-Object).Count
-          $prHit = (Select-String -Path "lcov.info" -Pattern "^DA:" | ForEach-Object {
-            ($_.Line -split ",")[1]
-          } | Where-Object { [int]$_ -gt 0 } | Measure-Object).Count
-
-          if (Test-Path "baseline-coverage/lcov.info") {
-            $baselineLines = (Select-String -Path "baseline-coverage/lcov.info" -Pattern "^DA:" | Measure-Object).Count
-            $baselineHit = (Select-String -Path "baseline-coverage/lcov.info" -Pattern "^DA:" | ForEach-Object {
-              ($_.Line -split ",")[1]
-            } | Where-Object { [int]$_ -gt 0 } | Measure-Object).Count
-          } else {
-            $baselineLines = 0
-            $baselineHit = 0
-          }
-
-          $prPct = if ($prLines -gt 0) { [math]::Round(($prHit / $prLines) * 100, 1) } else { 0 }
-          $baselinePct = if ($baselineLines -gt 0) { [math]::Round(($baselineHit / $baselineLines) * 100, 1) } else { 0 }
-          $delta = [math]::Round($prPct - $baselinePct, 1)
-
-          echo "pr_pct=$prPct" >> $env:GITHUB_OUTPUT
-          echo "pr_lines=$prLines" >> $env:GITHUB_OUTPUT
-          echo "pr_hit=$prHit" >> $env:GITHUB_OUTPUT
-          echo "baseline_pct=$baselinePct" >> $env:GITHUB_OUTPUT
-          echo "delta=$delta" >> $env:GITHUB_OUTPUT
-        shell: pwsh
-
-      - name: Post Coverage Comment (Windows)
-        if: startsWith(matrix.os, 'windows') && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: coverage-windows
-          message: |
-            ## Coverage Report (Windows)
-
-            | Metric | PR | Baseline | Delta |
-            |--------|-----|----------|-------|
-            | Coverage | ${{ steps.coverage-windows.outputs.pr_pct }}% | ${{ steps.coverage-windows.outputs.baseline_pct }}% | ${{ steps.coverage-windows.outputs.delta }}% |
-            | Lines | ${{ steps.coverage-windows.outputs.pr_lines }} | - | - |
-            | Covered | ${{ steps.coverage-windows.outputs.pr_hit }} | - | - |
+          header: ${{ matrix.comment_header }}
+          path: coverage-report.md

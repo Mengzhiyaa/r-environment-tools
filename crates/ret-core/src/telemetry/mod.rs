@@ -3,10 +3,12 @@
 
 use inaccurate_environment::InaccurateEnvironmentInfo;
 use refresh_performance::RefreshPerformance;
+use refresh_progress::RefreshProgress;
 use serde::{Deserialize, Serialize};
 
 pub mod inaccurate_environment;
 pub mod refresh_performance;
+pub mod refresh_progress;
 
 pub type NumberOfCustomSearchPaths = u32;
 
@@ -19,6 +21,7 @@ pub enum TelemetryEvent {
     SearchCompleted(std::time::Duration),
     InaccurateEnvironmentInfo(InaccurateEnvironmentInfo),
     RefreshPerformance(RefreshPerformance),
+    RefreshProgress(RefreshProgress),
 }
 
 pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
@@ -33,5 +36,6 @@ pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
         TelemetryEvent::SearchCompleted(_) => "SearchCompleted",
         TelemetryEvent::InaccurateEnvironmentInfo(_) => "InaccurateEnvironmentInfo",
         TelemetryEvent::RefreshPerformance(_) => "RefreshPerformance",
+        TelemetryEvent::RefreshProgress(_) => "RefreshProgress",
     }
 }

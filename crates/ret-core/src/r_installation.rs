@@ -56,7 +56,11 @@ pub enum DiscoverySource {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum LocatorMetadata {
     Conda {
         environment_path: PathBuf,
@@ -98,7 +102,10 @@ pub struct RVersionsOverlay {
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
 pub struct RInstallation {
+    /// A custom user-facing label supplied by an external source, such as an
+    /// r-versions entry. Locators must not synthesize this from kind/name/version.
     pub display_name: Option<String>,
+    /// The environment name, primarily for Conda and Pixi installations.
     pub name: Option<String>,
     pub executable: Option<PathBuf>,
     pub kind: Option<RInstallationKind>,

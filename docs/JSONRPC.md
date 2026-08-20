@@ -101,6 +101,12 @@ interface RInstallation {
 }
 ```
 
+`displayName` is reserved for a custom label supplied by an external source
+(for example, an r-versions entry). Manager-backed installations expose their
+identity through `kind`, `name`, and `version`; clients can therefore format a
+Conda installation as `R 4.3.3 (Conda: seurat4)` without parsing a preformatted
+label.
+
 ## Example Installation Payloads
 
 ```json
@@ -273,8 +279,14 @@ interface RefreshResult {
    * Total time taken by the refresh, in milliseconds.
    */
   duration: number;
+  /** Stable identifier included in RefreshProgress events for this scan. */
+  refreshId: number;
 }
 ```
+
+Refreshes use a configuration snapshot. Requests with the same normalized parameters and
+configuration generation share one scan and each receive a response. If configuration changes
+during a scan, notifications and state synchronization from the older generation are discarded.
 
 Refresh streams notifications as results are discovered:
 
@@ -416,7 +428,8 @@ type TelemetryEventName =
   | "AllSearchPathsEnvironmentsSearchCompleted"
   | "SearchCompleted"
   | "InaccurateEnvironmentInfo"
-  | "RefreshPerformance";
+  | "RefreshPerformance"
+  | "RefreshProgress";
 
 interface TelemetryParams {
   event: TelemetryEventName;
@@ -427,6 +440,16 @@ interface RefreshPerformance {
   total: number;
   breakdown: Record<string, number>;
   locators: Record<string, number>;
+}
+
+interface RefreshProgress {
+  refreshId: number;
+  generation: number;
+  phase: "refresh" | "locators" | "path" | "searchPaths" | "merge";
+  status: "started" | "completed";
+  elapsedMs: number;
+  phaseElapsedMs?: number;
+  locator?: string;
 }
 
 interface InaccurateEnvironmentInfo {
@@ -442,5 +465,6 @@ interface InaccurateEnvironmentInfo {
 Notes:
 
 - `RefreshPerformance` carries millisecond timings.
+- `RefreshProgress` never includes workspace, home, environment names, or other user paths.
 - `InaccurateEnvironmentInfo` is emitted only when resolve-time data contradicts discovery-time data.
 - the duration-based search completion events serialize Rust duration payloads; treat them as telemetry-only values rather than user-facing protocol data.

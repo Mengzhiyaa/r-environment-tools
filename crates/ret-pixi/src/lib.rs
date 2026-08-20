@@ -112,12 +112,6 @@ impl Locator for Pixi {
             .unwrap_or_default()
             .to_string();
 
-        let display_name = if name.is_empty() || name == "default" {
-            "Pixi R".to_string()
-        } else {
-            format!("Pixi R ({name})")
-        };
-
         let home = env.home.clone();
 
         let extra_executables = find_executables(&prefix);
@@ -128,7 +122,6 @@ impl Locator for Pixi {
 
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Pixi))
-                .display_name(Some(display_name))
                 .name(Some(name.clone()))
                 .executable(Some(env.executable.clone()))
                 .home(home)
@@ -158,6 +151,7 @@ impl Locator for Pixi {
 #[cfg(test)]
 mod tests {
     use super::{get_pixi_prefix, infer_manifest_path, is_pixi_env};
+    use ret_core::Locator;
     use std::path::PathBuf;
 
     #[test]
@@ -195,6 +189,33 @@ mod tests {
         let found = found.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
         let expected = std::fs::canonicalize(&prefix).unwrap_or(prefix);
         assert_eq!(found, Some(expected));
+    }
+
+    #[test]
+    fn pixi_identity_uses_structured_fields_instead_of_a_synthetic_display_name() {
+        let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+        let prefix = tmp.path().join(".pixi").join("envs").join("analysis");
+        let conda_meta = prefix.join("conda-meta");
+        let bin = prefix.join("lib").join("R").join("bin");
+        std::fs::create_dir_all(&conda_meta).expect("failed to create conda-meta");
+        std::fs::create_dir_all(&bin).expect("failed to create bin dir");
+        std::fs::write(conda_meta.join("pixi"), "").expect("failed to create pixi marker");
+
+        let executable = bin.join("R");
+        std::fs::write(&executable, "").expect("failed to create fake R");
+        let env = ret_core::env::REnv::new(
+            executable,
+            Some(prefix.join("lib").join("R")),
+            Some("4.4.2".to_string()),
+        );
+
+        let installation = super::Pixi::new()
+            .try_from(&env)
+            .expect("expected a Pixi R installation");
+
+        assert_eq!(installation.display_name, None);
+        assert_eq!(installation.name.as_deref(), Some("analysis"));
+        assert_eq!(installation.version.as_deref(), Some("4.4.2"));
     }
 
     #[test]

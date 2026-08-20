@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::{any::Any, path::PathBuf};
 
 use env::REnv;
 use manager::EnvManager;
@@ -55,13 +55,33 @@ pub enum LocatorKind {
     Nix,
     Pixi,
     Rig,
+    RVersions,
     Scoop,
     Spack,
     WindowsHq,
     WindowsRegistry,
 }
 
-pub trait Locator: Send + Sync {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshStatePersistence {
+    /// The locator has no mutable request state.
+    Stateless,
+    /// The locator stores configuration, which must come from the request snapshot.
+    ConfiguredOnly,
+    /// The locator has a cache that later requests can rebuild on demand.
+    SelfHydratingCache,
+    /// Later requests depend on state discovered by refresh.
+    SyncedDiscoveryState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshStateSyncScope {
+    Full,
+    GlobalFiltered(RInstallationKind),
+    Workspace,
+}
+
+pub trait Locator: Any + Send + Sync {
     /// Returns the name of the locator.
     fn get_kind(&self) -> LocatorKind;
     /// Configures the locator with the given configuration.
@@ -100,10 +120,26 @@ pub trait Locator: Send + Sync {
     fn configure(&self, _config: &Configuration) {
         //
     }
+    /// Declares how mutable locator state behaves across a transient refresh.
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::Stateless
+    }
+    /// Copies correctness-critical discovery state from a transient locator.
+    ///
+    /// Only locators classified as `SyncedDiscoveryState` should override this.
+    fn sync_refresh_state_from(&self, _source: &dyn Locator, _scope: &RefreshStateSyncScope) {
+        //
+    }
     /// Returns a list of supported installation kinds for this locator.
     fn supported_categories(&self) -> Vec<RInstallationKind>;
     /// Attempts to classify a raw R executable into a known installation kind.
     fn try_from(&self, env: &REnv) -> Option<RInstallation>;
     /// Finds all installations specific to this locator.
     fn find(&self, reporter: &dyn Reporter);
+}
+
+impl dyn Locator {
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

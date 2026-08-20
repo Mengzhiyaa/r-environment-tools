@@ -137,7 +137,7 @@ impl RVersions {
 
 impl Locator for RVersions {
     fn get_kind(&self) -> LocatorKind {
-        LocatorKind::LinuxGlobal
+        LocatorKind::RVersions
     }
 
     fn supported_categories(&self) -> Vec<RInstallationKind> {

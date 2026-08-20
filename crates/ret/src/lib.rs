@@ -138,7 +138,7 @@ fn find_installations(
     let reporter = CacheReporter::new(stdio_reporter.clone());
 
     let summary =
-        find_and_report_installations(&reporter, config, locators, environment, search_scope);
+        find_and_report_installations(&reporter, config, locators, environment, search_scope, None);
     let summary = summary.lock().expect("summary mutex poisoned");
 
     if options.print_summary && !summary.locators.is_empty() {
@@ -194,10 +194,7 @@ fn find_installations(
     }
 
     if !summary.installations.is_empty() {
-        let total = summary
-            .installations
-            .values()
-            .fold(0, |acc, value| acc + value);
+        let total = summary.installations.values().sum::<u16>();
         println!("Installations ({total}):");
         println!("------------------");
         for (key, value) in summary
@@ -228,7 +225,7 @@ fn find_installations_json(
 ) {
     let reporter = CacheReporter::new(Arc::new(collect::create_reporter()));
 
-    find_and_report_installations(&reporter, config, locators, environment, search_scope);
+    find_and_report_installations(&reporter, config, locators, environment, search_scope, None);
 
     let managers = reporter.get_managers();
     let mut installations = reporter.get_installations();

@@ -9,8 +9,10 @@ use ret_rig::Rig;
 #[test]
 fn try_from_classifies_rig_managed_installation() {
     let locator = Rig::new();
-    let mut config = Configuration::default();
-    config.rig_executable = Some(norm_case("/usr/local/bin/rig"));
+    let config = Configuration {
+        rig_executable: Some(norm_case("/usr/local/bin/rig")),
+        ..Configuration::default()
+    };
     locator.configure(&config);
 
     let env = REnv::new(

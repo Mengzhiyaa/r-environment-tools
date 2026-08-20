@@ -30,6 +30,7 @@ fn homebrew_container_discovers_r() {
         &locators,
         &environment,
         None,
+        None,
     );
 
     let installations = reporter

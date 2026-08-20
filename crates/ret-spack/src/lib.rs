@@ -6,7 +6,7 @@ use ret_core::{
     os_environment::Environment,
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence,
 };
 use ret_fs::path::resolve_any_symlink;
 use ret_r_utils::{
@@ -61,6 +61,10 @@ impl Spack {
 impl Locator for Spack {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::Spack
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
     }
 
     fn supported_categories(&self) -> Vec<RInstallationKind> {

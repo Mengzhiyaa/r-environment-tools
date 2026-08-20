@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::arch::Architecture;
 use ret_fs::path::norm_case;
@@ -38,20 +38,20 @@ impl REnv {
     }
 }
 
-fn infer_home(executable: &PathBuf) -> Option<PathBuf> {
+fn infer_home(executable: &Path) -> Option<PathBuf> {
     let parent = executable.parent()?;
 
     // Windows multi-arch layout: <R_HOME>/bin/x64/R.exe
     if parent.ends_with("x64") || parent.ends_with("i386") {
         let bin = parent.parent()?;
         if bin.ends_with("bin") {
-            return Some(norm_case(bin.parent()?.to_path_buf()));
+            return Some(norm_case(bin.parent()?));
         }
     }
 
     // Unix/macOS layout: <R_HOME>/bin/R
     if parent.ends_with("bin") {
-        return Some(norm_case(parent.parent()?.to_path_buf()));
+        return Some(norm_case(parent.parent()?));
     }
 
     None

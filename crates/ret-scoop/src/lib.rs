@@ -118,9 +118,7 @@ fn scoop_install_roots(environment: &dyn Environment) -> Vec<PathBuf> {
 }
 
 fn scoop_manager(environment: &dyn Environment) -> Option<EnvManager> {
-    let Some(home) = environment.get_user_home() else {
-        return None;
-    };
+    let home = environment.get_user_home()?;
 
     for candidate in [
         home.join("scoop").join("shims").join("scoop.cmd"),

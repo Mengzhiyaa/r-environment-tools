@@ -9,7 +9,7 @@ use ret_core::{
     os_environment::Environment,
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
-    Configuration, Locator, LocatorKind,
+    Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
 use ret_fs::path::resolve_symlink;
 use ret_r_utils::{
@@ -62,6 +62,10 @@ impl Homebrew {
 impl Locator for Homebrew {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::Homebrew
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
     }
 
     fn configure(&self, _config: &Configuration) {}

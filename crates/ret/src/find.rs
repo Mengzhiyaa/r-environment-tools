@@ -7,6 +7,10 @@ use ret_core::{
     os_environment::Environment,
     r_installation::{DiscoverySource, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
+    telemetry::{
+        refresh_progress::{RefreshProgress, RefreshProgressPhase, RefreshProgressStatus},
+        TelemetryEvent,
+    },
     Configuration, Locator, LocatorKind,
 };
 use ret_r_utils::executable::{
@@ -19,7 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tracing::{info_span, instrument};
 
@@ -40,6 +44,35 @@ pub enum SearchScope {
     SearchPaths,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RefreshContext {
+    pub id: u64,
+    pub generation: u64,
+    pub started: Instant,
+}
+
+fn report_refresh_progress(
+    reporter: &dyn Reporter,
+    refresh: Option<RefreshContext>,
+    phase: RefreshProgressPhase,
+    status: RefreshProgressStatus,
+    phase_elapsed: Option<Duration>,
+    locator: Option<String>,
+) {
+    let Some(refresh) = refresh else {
+        return;
+    };
+    reporter.report_telemetry(&TelemetryEvent::RefreshProgress(RefreshProgress {
+        refresh_id: refresh.id,
+        generation: refresh.generation,
+        phase,
+        status,
+        elapsed_ms: refresh.started.elapsed().as_millis(),
+        phase_elapsed_ms: phase_elapsed.map(|elapsed| elapsed.as_millis()),
+        locator,
+    }));
+}
+
 #[instrument(skip(reporter, configuration, locators, environment), fields(search_scope = ?search_scope))]
 pub fn find_and_report_installations(
     reporter: &dyn Reporter,
@@ -47,6 +80,7 @@ pub fn find_and_report_installations(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     environment: &dyn Environment,
     search_scope: Option<SearchScope>,
+    refresh: Option<RefreshContext>,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
         total: Duration::from_secs(0),
@@ -73,6 +107,14 @@ pub fn find_and_report_installations(
         scope.spawn(|| {
             let _span = info_span!("locators_phase").entered();
             let start = std::time::Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh,
+                RefreshProgressPhase::Locators,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             if search_global {
                 thread::scope(|scope| {
                     for locator in locators.iter() {
@@ -85,27 +127,62 @@ pub fn find_and_report_installations(
                         let summary = summary.clone();
                         scope.spawn(move || {
                             let start = std::time::Instant::now();
+                            let locator_name = format!("{:?}", locator.get_kind());
+                            report_refresh_progress(
+                                reporter,
+                                refresh,
+                                RefreshProgressPhase::Locators,
+                                RefreshProgressStatus::Started,
+                                None,
+                                Some(locator_name.clone()),
+                            );
                             locator.find(reporter);
+                            let elapsed = start.elapsed();
                             summary
                                 .lock()
                                 .unwrap()
                                 .locators
-                                .insert(locator.get_kind(), start.elapsed());
+                                .insert(locator.get_kind(), elapsed);
+                            report_refresh_progress(
+                                reporter,
+                                refresh,
+                                RefreshProgressPhase::Locators,
+                                RefreshProgressStatus::Completed,
+                                Some(elapsed),
+                                Some(locator_name),
+                            );
                         });
                     }
                 });
             }
+            let elapsed = start.elapsed();
             summary
                 .lock()
                 .unwrap()
                 .breakdown
-                .insert("Locators", start.elapsed());
+                .insert("Locators", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh,
+                RefreshProgressPhase::Locators,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
 
         let summary_for_path = summary.clone();
         scope.spawn(move || {
             let _span = info_span!("path_search_phase").entered();
             let start = std::time::Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh,
+                RefreshProgressPhase::Path,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             if search_global {
                 let global_search_paths = environment.get_know_global_search_locations();
                 find_r_installations_in_paths(
@@ -117,17 +194,34 @@ pub fn find_and_report_installations(
                     DiscoverySource::GlobalPaths,
                 );
             }
+            let elapsed = start.elapsed();
             summary_for_path
                 .lock()
                 .unwrap()
                 .breakdown
-                .insert("Path", start.elapsed());
+                .insert("Path", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh,
+                RefreshProgressPhase::Path,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
 
         let summary_for_explicit = summary.clone();
         scope.spawn(move || {
             let _span = info_span!("explicit_search_phase").entered();
             let start = std::time::Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh,
+                RefreshProgressPhase::SearchPaths,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             let global_search_paths = environment.get_know_global_search_locations();
             let mut directories_to_search = if search_global {
                 [
@@ -159,11 +253,20 @@ pub fn find_and_report_installations(
                     Some(DiscoverySource::ExplicitSearch),
                 );
             }
+            let elapsed = start.elapsed();
             summary_for_explicit
                 .lock()
                 .unwrap()
                 .breakdown
-                .insert("SearchPaths", start.elapsed());
+                .insert("SearchPaths", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh,
+                RefreshProgressPhase::SearchPaths,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
     });
 
@@ -219,7 +322,7 @@ pub fn find_r_installations_in_directory_recursive(
             .filter_map(Result::ok)
             .filter(|entry| entry.path().is_dir())
             .map(|entry| entry.path())
-            .filter(|path| should_search_for_installations_in_path(path))
+            .filter(should_search_for_installations_in_path)
             .collect::<Vec<_>>();
 
         find_r_installations_in_paths(

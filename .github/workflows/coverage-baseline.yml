@@ -24,6 +24,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate snapshot comparator
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        shell: bash
+
       # ── Install R ──
       - name: Install R
         uses: r-lib/actions/setup-r@v2
@@ -67,6 +76,16 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: trace
+        shell: bash
+
+      - name: Validate coverage baseline
+        run: >-
+          python scripts/quality_snapshot.py coverage
+          --current lcov.info
+          --baseline lcov.info
+          --platform "${{ matrix.os }} baseline"
+          --report coverage-baseline-report.md
+          --summary "$GITHUB_STEP_SUMMARY"
         shell: bash
 
       - name: Upload Coverage Artifact

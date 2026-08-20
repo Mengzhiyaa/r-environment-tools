@@ -136,9 +136,9 @@ fn get_installation_details(executable: &Path) -> Option<ResolvedRInstallation> 
                 .find(|candidate| candidate.exists())
                 .cloned()
                 .map(norm_case)
-                .unwrap_or_else(|| norm_case(executable.to_path_buf()));
+                .unwrap_or_else(|| norm_case(executable));
 
-            let mut known_executables = vec![norm_case(executable.to_path_buf())];
+            let mut known_executables = vec![norm_case(executable)];
             if let Ok(canonical) = fs::canonicalize(executable) {
                 known_executables.push(norm_case(canonical));
             }

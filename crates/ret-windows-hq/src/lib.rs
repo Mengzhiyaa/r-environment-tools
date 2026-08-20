@@ -16,7 +16,7 @@ use ret_core::{
     os_environment::Environment,
     r_installation::{RInstallation, RInstallationBuilder, RInstallationKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence,
 };
 use ret_r_utils::{env::ResolvedRInstallation, executable::find_executable};
 use std::{
@@ -42,6 +42,10 @@ impl WindowsHq {
 impl Locator for WindowsHq {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::WindowsHq
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
     }
 
     fn supported_categories(&self) -> Vec<RInstallationKind> {
