@@ -167,7 +167,10 @@ jobs:
       # Homebrew R (Linuxbrew)
       - name: Homebrew R
         if: contains(matrix.image, 'homebrew/brew')
-        run: brew install r
+        # GitHub Actions needs the container to run as root to access the
+        # mounted workspace, but Homebrew refuses to update or install as root.
+        # Run the Homebrew commands as the image's non-root linuxbrew user.
+        run: su - linuxbrew -c '/home/linuxbrew/.linuxbrew/bin/brew update && /home/linuxbrew/.linuxbrew/bin/brew install r'
         shell: bash
 
       - name: Verify R installation

@@ -145,3 +145,48 @@ fn resolve_json_reports_installation() {
     );
     assert_eq!(value["version"], "4.2.0");
 }
+
+#[test]
+fn resolve_missing_installation_fails_with_json_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("missing").join("bin").join("R");
+    let output = Command::new(ret_executable())
+        .arg("resolve")
+        .arg(&missing)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let value = parse_stdout_json(&output);
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("Could not resolve R installation"));
+    assert!(message.contains(missing.to_str().unwrap()));
+}
+
+#[test]
+fn resolve_missing_installation_fails_in_text_mode() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = Command::new(ret_executable())
+        .arg("resolve")
+        .arg(temp.path().join("missing"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Could not resolve R installation"));
+}
+
+#[test]
+fn resolve_accepts_version_directories_with_internal_r_layouts() {
+    for relative in ["lib/R", "lib64/R", "Resources"] {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join(relative);
+        let executable = home.join("bin/R");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        write_fake_r_runtime(&executable, &home, "4.4.0");
+        let output = run_ret(["resolve", temp.path().to_str().unwrap(), "--json"]);
+        let value = parse_stdout_json(&output);
+        assert_eq!(value["home"], home.to_string_lossy().as_ref());
+        assert_eq!(value["executable"], executable.to_string_lossy().as_ref());
+    }
+}

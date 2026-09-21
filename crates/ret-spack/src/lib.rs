@@ -12,6 +12,7 @@ use ret_fs::path::resolve_any_symlink;
 use ret_r_utils::{
     env::ResolvedRInstallation,
     executable::{filter_symlink_paths, find_executables},
+    process::probe_output,
 };
 use std::{
     env, fs,
@@ -170,9 +171,7 @@ impl Locator for Spack {
 }
 
 fn spack_prefixes_from_manager(manager: &EnvManager) -> Vec<PathBuf> {
-    let Ok(output) = Command::new(&manager.executable)
-        .args(["find", "--paths", "r"])
-        .output()
+    let Ok(output) = probe_output(Command::new(&manager.executable).args(["find", "--paths", "r"]))
     else {
         return Vec::new();
     };

@@ -60,18 +60,16 @@ impl LinuxGlobalR {
             if !hq_path.is_dir() {
                 continue;
             }
-            // Add the HQ directory's own bin/ (for single-R installs like /usr/lib/R/bin/R).
-            scan_dirs.push(hq_path.join("bin"));
+            // Probe the HQ directory through the shared executable layout rules.
+            scan_dirs.push(hq_path.to_path_buf());
 
             // Enumerate version subdirectories like /opt/R/4.3.0/bin/.
             if let Ok(entries) = fs::read_dir(hq_path) {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
                     if path.is_dir() {
-                        // Standard Unix layout: <version>/bin/R
-                        scan_dirs.push(path.join("bin"));
-                        // Some installs put R in <version>/lib/R/bin/R
-                        scan_dirs.push(path.join("lib").join("R").join("bin"));
+                        // The shared candidate rules cover bin, lib/R and lib64/R.
+                        scan_dirs.push(path);
                     }
                 }
             }
@@ -195,21 +193,21 @@ fn find_and_report_global_r_in(
 }
 
 fn is_global_bin(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-    // Standard system bin directories
-    path == Path::new("/bin")
-        || path == Path::new("/usr/bin")
-        || path == Path::new("/usr/local/bin")
-        || path == Path::new("/opt/bin")
-        // Server library directories and their version subdirectories
-        || path_str.starts_with("/usr/lib/R")
-        || path_str.starts_with("/usr/lib64/R")
-        || path_str.starts_with("/usr/local/lib/R")
-        || path_str.starts_with("/usr/local/lib64/R")
-        || path_str.starts_with("/opt/local/lib/R")
-        || path_str.starts_with("/opt/local/lib64/R")
-        || path_str.starts_with("/opt/local/R")
-        || path_str.starts_with("/opt/R")
+    ["/bin", "/usr/bin", "/usr/local/bin", "/opt/bin"]
+        .iter()
+        .any(|root| path == Path::new(root))
+        || [
+            "/usr/lib/R",
+            "/usr/lib64/R",
+            "/usr/local/lib/R",
+            "/usr/local/lib64/R",
+            "/opt/local/lib/R",
+            "/opt/local/lib64/R",
+            "/opt/local/R",
+            "/opt/R",
+        ]
+        .iter()
+        .any(|root| path.starts_with(root))
 }
 
 fn looks_like_homebrew_path(path: &Path) -> bool {

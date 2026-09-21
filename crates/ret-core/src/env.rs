@@ -42,7 +42,10 @@ fn infer_home(executable: &Path) -> Option<PathBuf> {
     let parent = executable.parent()?;
 
     // Windows multi-arch layout: <R_HOME>/bin/x64/R.exe
-    if parent.ends_with("x64") || parent.ends_with("i386") {
+    if ["x64", "i386", "aarch64", "arm64"]
+        .iter()
+        .any(|arch| parent.ends_with(arch))
+    {
         let bin = parent.parent()?;
         if bin.ends_with("bin") {
             return Some(norm_case(bin.parent()?));

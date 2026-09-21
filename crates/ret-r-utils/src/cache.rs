@@ -135,31 +135,30 @@ impl CacheEntryImpl {
     }
 
     pub fn verify_in_memory_cache(&self) {
-        for executable_info in self
+        let invalid = self
             .executables
             .lock()
             .expect("executables mutex poisoned")
             .iter()
-        {
-            if let Ok(metadata) = executable_info.0.metadata() {
-                let mtime_changed = metadata.modified().ok() != Some(executable_info.1);
-                let ctime_changed = match executable_info.2 {
-                    Some(stored_ctime) => metadata.created().ok() != Some(stored_ctime),
-                    None => false,
+            .any(|(path, modified, created)| {
+                let Ok(metadata) = path.metadata() else {
+                    return true;
                 };
-                if mtime_changed || ctime_changed {
-                    trace!(
-                        "Executable {:?} changed since it was cached",
-                        executable_info.0
-                    );
-                    self.installation
-                        .lock()
-                        .expect("installation mutex poisoned")
-                        .take();
-                    if let Some(cache_directory) = &self.cache_directory {
-                        delete_cache_file(cache_directory, &self.executable);
-                    }
-                }
+                !metadata.is_file()
+                    || metadata.modified().ok() != Some(*modified)
+                    || created.is_some_and(|created| metadata.created().ok() != Some(created))
+            });
+        if invalid || !self.executable.is_file() {
+            trace!(
+                "Invalidating cached R installation for {:?}",
+                self.executable
+            );
+            self.installation
+                .lock()
+                .expect("installation mutex poisoned")
+                .take();
+            if let Some(cache_directory) = &self.cache_directory {
+                delete_cache_file(cache_directory, &self.executable);
             }
         }
     }
@@ -266,5 +265,74 @@ impl CacheEntry for CacheEntryImpl {
             .lock()
             .expect("executables mutex poisoned")
             .extend(executables_to_track);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ret_core::arch::Architecture;
+
+    fn installation(executable: &std::path::Path) -> ResolvedRInstallation {
+        ResolvedRInstallation {
+            executable: executable.to_path_buf(),
+            home: executable.parent().unwrap().to_path_buf(),
+            version: "4.4.0".to_string(),
+            arch: Architecture::X64,
+            known_executables: Some(vec![executable.to_path_buf()]),
+            symlinks: None,
+        }
+    }
+
+    #[test]
+    fn deleted_executable_invalidates_memory_and_disk_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("R");
+        std::fs::write(&executable, "runtime").unwrap();
+        let cache_dir = temp.path().join("cache");
+        let cache = CacheImpl::new(Some(cache_dir.clone()));
+        let entry = cache.create_cache(executable.clone());
+        let entry = entry.lock().unwrap();
+        entry.store(installation(&executable));
+        assert!(entry.get().is_some());
+        std::fs::remove_file(&executable).unwrap();
+        assert!(entry.get().is_none());
+        assert!(get_cache_from_file(&cache_dir, &executable).is_none());
+    }
+
+    #[test]
+    fn deleted_alias_invalidates_cache_even_when_primary_still_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("R");
+        let alias = temp.path().join("Rscript");
+        std::fs::write(&executable, "runtime").unwrap();
+        std::fs::write(&alias, "runtime").unwrap();
+        let cache = CacheImpl::new(None);
+        let entry = cache.create_cache(executable.clone());
+        let entry = entry.lock().unwrap();
+        let mut info = installation(&executable);
+        info.known_executables.as_mut().unwrap().push(alias.clone());
+        entry.store(info);
+        std::fs::remove_file(alias).unwrap();
+        assert!(executable.exists());
+        assert!(entry.get().is_none());
+    }
+
+    #[test]
+    fn cache_can_be_repopulated_after_reinstallation() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("R");
+        std::fs::write(&executable, "old runtime").unwrap();
+        let cache = CacheImpl::new(None);
+        let entry = cache.create_cache(executable.clone());
+        let entry = entry.lock().unwrap();
+        entry.store(installation(&executable));
+        std::fs::remove_file(&executable).unwrap();
+        assert!(entry.get().is_none());
+        std::fs::write(&executable, "new runtime").unwrap();
+        let mut updated = installation(&executable);
+        updated.version = "4.5.0".to_string();
+        entry.store(updated);
+        assert_eq!(entry.get().unwrap().version, "4.5.0");
     }
 }

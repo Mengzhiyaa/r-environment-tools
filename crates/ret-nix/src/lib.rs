@@ -100,7 +100,7 @@ impl Locator for Nix {
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Nix))
                 .display_name(Some("Nix R".to_string()))
-                .executable(Some(resolved_executable.clone()))
+                .executable(Some(env.executable.clone()))
                 .home(Some(home.clone()))
                 .version(env.version.clone())
                 .arch(
@@ -160,6 +160,27 @@ fn nix_profile_bins(environment: &dyn Environment) -> Vec<PathBuf> {
 
     if let Some(home) = environment.get_user_home() {
         bins.push(home.join(".nix-profile").join("bin"));
+    }
+
+    if let Some(home) = environment.get_user_home() {
+        let state = environment
+            .get_env_var("XDG_STATE_HOME".to_string())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local").join("state"));
+        bins.push(
+            state
+                .join("nix")
+                .join("profiles")
+                .join("profile")
+                .join("bin"),
+        );
+    }
+    if let Some(profiles) = environment.get_env_var("NIX_PROFILES".to_string()) {
+        bins.extend(
+            profiles
+                .split_whitespace()
+                .map(|profile| PathBuf::from(profile).join("bin")),
+        );
     }
 
     let username = environment

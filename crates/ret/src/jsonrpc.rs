@@ -26,6 +26,7 @@ use ret_fs::path::norm_case;
 use ret_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
+    RequestId,
 };
 use ret_r_utils::cache::{clear_cache, set_cache_directory};
 use ret_reporter::{cache::CacheReporter, collect, jsonrpc};
@@ -36,7 +37,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Condvar, Mutex, RwLock,
     },
     thread,
@@ -44,6 +45,63 @@ use std::{
 };
 
 static NEXT_REFRESH_ID: AtomicU64 = AtomicU64::new(1);
+const MAX_ACTIVE_REQUESTS: usize = 32;
+const MAX_JOINED_REFRESH_REQUESTS: usize = 256;
+
+#[derive(Default)]
+struct RequestLimit {
+    active: Arc<AtomicUsize>,
+}
+
+impl RequestLimit {
+    fn try_acquire(&self) -> Option<RequestPermit> {
+        self.active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < MAX_ACTIVE_REQUESTS).then_some(active + 1)
+            })
+            .ok()?;
+        Some(RequestPermit(self.active.clone()))
+    }
+}
+
+struct RequestPermit(Arc<AtomicUsize>);
+
+impl Drop for RequestPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn spawn_request(context: Arc<Context>, id: RequestId, task: impl FnOnce() + Send + 'static) {
+    let Some(permit) = context.request_limit.try_acquire() else {
+        send_error(
+            Some(id),
+            -32000,
+            "Too many active requests; retry later".to_string(),
+        );
+        return;
+    };
+    let error_id = id.clone();
+    let spawned = thread::Builder::new()
+        .name("ret-request".to_string())
+        .spawn(move || {
+            let _permit = permit;
+            if panic::catch_unwind(AssertUnwindSafe(task)).is_err() {
+                send_error(
+                    Some(error_id),
+                    -32603,
+                    "Request failed unexpectedly".to_string(),
+                );
+            }
+        });
+    if let Err(error) = spawned {
+        send_error(
+            Some(id),
+            -32603,
+            format!("Could not start request: {error}"),
+        );
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct ConfigurationState {
@@ -60,7 +118,7 @@ struct RefreshKey {
 #[derive(Debug)]
 struct ActiveRefresh {
     key: RefreshKey,
-    request_ids: Vec<u32>,
+    request_ids: Vec<RequestId>,
 }
 
 #[derive(Debug, Default)]
@@ -81,10 +139,11 @@ enum RefreshRegistration {
     Start,
     Joined,
     Wait,
+    Busy,
 }
 
 impl RefreshCoordinator {
-    fn register(&self, request_id: u32, key: RefreshKey) -> RefreshRegistration {
+    fn register(&self, request_id: RequestId, key: RefreshKey) -> RefreshRegistration {
         let mut state = self
             .state
             .lock()
@@ -101,6 +160,9 @@ impl RefreshCoordinator {
             | RefreshCoordinatorState::Completing(active)
                 if active.key == key =>
             {
+                if active.request_ids.len() >= MAX_JOINED_REFRESH_REQUESTS {
+                    return RefreshRegistration::Busy;
+                }
                 active.request_ids.push(request_id);
                 RefreshRegistration::Joined
             }
@@ -140,7 +202,7 @@ impl RefreshCoordinator {
         }
     }
 
-    fn drain_request_ids(&self, key: &RefreshKey) -> Vec<u32> {
+    fn drain_request_ids(&self, key: &RefreshKey) -> Vec<RequestId> {
         let mut state = self
             .state
             .lock()
@@ -271,6 +333,7 @@ pub struct Context {
     locators: Arc<Vec<Arc<dyn Locator>>>,
     os_environment: Arc<dyn Environment>,
     refresh_coordinator: RefreshCoordinator,
+    request_limit: RequestLimit,
 }
 
 pub fn start_jsonrpc_server() {
@@ -285,6 +348,7 @@ pub fn start_jsonrpc_server() {
         conda_locator,
         os_environment: Arc::new(environment),
         refresh_coordinator: RefreshCoordinator::default(),
+        request_limit: RequestLimit::default(),
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
@@ -295,7 +359,8 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("condaInfo", handle_conda_info);
     handlers.add_request_handler("clear", handle_clear_cache);
     handlers.add_request_handler("clearCache", handle_clear_cache);
-    start_server(&handlers)
+    start_server(&handlers);
+    ret_r_utils::process::shutdown_probes();
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -310,10 +375,10 @@ pub struct ConfigureOptions {
     pub cache_directory: Option<PathBuf>,
 }
 
-pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_configure(context: Arc<Context>, id: RequestId, params: Value) {
     match serde_json::from_value::<ConfigureOptions>(params.clone()) {
         Ok(configure_options) => {
-            thread::spawn(move || {
+            spawn_request(context.clone(), id.clone(), move || {
                 let workspace_directories =
                     expand_configured_directories(&configure_options.workspace_directories);
                 let environment_directories =
@@ -619,10 +684,10 @@ fn report_progress(
     ));
 }
 
-pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_refresh(context: Arc<Context>, id: RequestId, params: Value) {
     match parse_refresh_options(params.clone()) {
         Ok(refresh_options) => {
-            thread::spawn(move || loop {
+            spawn_request(context.clone(), id.clone(), move || loop {
                 let configuration = context
                     .configuration
                     .read()
@@ -632,8 +697,19 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     options: refresh_options.clone(),
                     configuration_generation: configuration.generation,
                 };
-                match context.refresh_coordinator.register(id, key.clone()) {
+                match context
+                    .refresh_coordinator
+                    .register(id.clone(), key.clone())
+                {
                     RefreshRegistration::Joined => return,
+                    RefreshRegistration::Busy => {
+                        send_error(
+                            Some(id),
+                            -32000,
+                            "Too many joined refresh requests; retry later".to_string(),
+                        );
+                        return;
+                    }
                     RefreshRegistration::Wait => context.refresh_coordinator.wait_until_idle(),
                     RefreshRegistration::Start => {
                         let mut guard = RefreshGuard::new(&context.refresh_coordinator, key);
@@ -677,10 +753,10 @@ pub struct FindOptions {
     pub search_path: PathBuf,
 }
 
-pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_find(context: Arc<Context>, id: RequestId, params: Value) {
     match serde_json::from_value::<FindOptions>(params.clone()) {
         Ok(find_options) => {
-            thread::spawn(move || {
+            spawn_request(context.clone(), id.clone(), move || {
                 let config = context
                     .configuration
                     .read()
@@ -727,10 +803,10 @@ pub struct ResolveOptions {
     pub executable: PathBuf,
 }
 
-pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_resolve(context: Arc<Context>, id: RequestId, params: Value) {
     match serde_json::from_value::<ResolveOptions>(params.clone()) {
         Ok(resolve_options) => {
-            thread::spawn(move || {
+            spawn_request(context.clone(), id.clone(), move || {
                 let configuration = context
                     .configuration
                     .read()
@@ -783,8 +859,8 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
     }
 }
 
-pub fn handle_conda_info(context: Arc<Context>, id: u32, _params: Value) {
-    thread::spawn(move || {
+pub fn handle_conda_info(context: Arc<Context>, id: RequestId, _params: Value) {
+    spawn_request(context.clone(), id.clone(), move || {
         let config = context.configuration.read().unwrap().config.clone();
         let conda = Conda::from_shared_environment_cache(
             context.os_environment.as_ref(),
@@ -796,8 +872,8 @@ pub fn handle_conda_info(context: Arc<Context>, id: u32, _params: Value) {
     });
 }
 
-pub fn handle_clear_cache(_context: Arc<Context>, id: u32, _params: Value) {
-    thread::spawn(move || match clear_cache() {
+pub fn handle_clear_cache(context: Arc<Context>, id: RequestId, _params: Value) {
+    spawn_request(context.clone(), id.clone(), move || match clear_cache() {
         Ok(_) => send_reply(id, None::<()>),
         Err(err) => send_error(Some(id), -4, format!("Failed to clear cache {err:?}")),
     });
@@ -1000,6 +1076,7 @@ mod tests {
         telemetry::TelemetryEvent,
         Configuration, LocatorKind, RefreshStatePersistence,
     };
+    use serde_json::json;
     use std::{
         path::PathBuf,
         sync::{Arc, Barrier, Mutex, RwLock},
@@ -1178,20 +1255,23 @@ mod tests {
             configuration_generation: 4,
         };
         assert!(matches!(
-            coordinator.register(10, key.clone()),
+            coordinator.register(json!(10), key.clone()),
             RefreshRegistration::Start
         ));
         assert!(matches!(
-            coordinator.register(11, key.clone()),
+            coordinator.register(json!(11), key.clone()),
             RefreshRegistration::Joined
         ));
         coordinator.begin_completion(&key);
-        assert_eq!(coordinator.drain_request_ids(&key), vec![10, 11]);
+        assert_eq!(
+            coordinator.drain_request_ids(&key),
+            vec![json!(10), json!(11)]
+        );
         assert!(coordinator.complete_if_empty(&key));
 
         let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             assert!(matches!(
-                coordinator.register(12, key.clone()),
+                coordinator.register(json!(12), key.clone()),
                 RefreshRegistration::Start
             ));
             let _guard = super::RefreshGuard::new(&coordinator, key.clone());
@@ -1199,7 +1279,7 @@ mod tests {
         }));
         assert!(panic_result.is_err());
         assert!(matches!(
-            coordinator.register(13, key),
+            coordinator.register(json!(13), key),
             RefreshRegistration::Start
         ));
     }
@@ -1238,5 +1318,54 @@ mod tests {
                 Some(RefreshStatePersistence::Stateless)
             );
         }
+    }
+
+    #[test]
+    fn request_limit_rejects_excess_work_and_releases_permits_on_unwind() {
+        let limit = super::RequestLimit::default();
+        let mut permits = (0..super::MAX_ACTIVE_REQUESTS)
+            .map(|_| limit.try_acquire().unwrap())
+            .collect::<Vec<_>>();
+        assert!(limit.try_acquire().is_none());
+        permits.pop();
+        let result = std::panic::catch_unwind(|| {
+            let _permit = limit.try_acquire().unwrap();
+            panic!("simulated request panic");
+        });
+        assert!(result.is_err());
+        assert!(limit.try_acquire().is_some());
+    }
+
+    #[test]
+    fn refresh_coordinator_preserves_ids_and_bounds_joined_requests() {
+        let coordinator = RefreshCoordinator::default();
+        let key = RefreshKey {
+            options: RefreshOptions::default(),
+            configuration_generation: 1,
+        };
+        assert!(matches!(
+            coordinator.register(json!("first"), key.clone()),
+            RefreshRegistration::Start
+        ));
+        let mut ids = vec![json!("first")];
+        for offset in 1..super::MAX_JOINED_REFRESH_REQUESTS {
+            let id = json!(u32::MAX as u64 + offset as u64);
+            ids.push(id.clone());
+            assert!(matches!(
+                coordinator.register(id, key.clone()),
+                RefreshRegistration::Joined
+            ));
+        }
+        assert!(matches!(
+            coordinator.register(json!("overflow"), key.clone()),
+            RefreshRegistration::Busy
+        ));
+        coordinator.begin_completion(&key);
+        assert_eq!(coordinator.drain_request_ids(&key), ids);
+        assert!(coordinator.complete_if_empty(&key));
+        assert!(matches!(
+            coordinator.register(json!("next"), key),
+            RefreshRegistration::Start
+        ));
     }
 }

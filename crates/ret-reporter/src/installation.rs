@@ -4,18 +4,59 @@ use ret_core::r_installation::{
 };
 use std::{collections::HashMap, path::PathBuf};
 
-pub fn get_installation_key(installation: &RInstallation) -> Option<PathBuf> {
-    if let Some(home) = &installation.home {
-        Some(home.clone())
-    } else if let Some(executable) = &installation.executable {
-        Some(executable.clone())
-    } else {
-        error!(
-            "Failed to report installation due to lack of executable and home: {:?}",
-            installation
-        );
-        None
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InstallationKey {
+    home: Option<PathBuf>,
+    launch_directory: Option<PathBuf>,
+    launcher_name: Option<String>,
+    architecture: Option<String>,
+    startup: Option<String>,
+    environment: Vec<(String, String)>,
+}
+
+pub fn get_installation_key(installation: &RInstallation) -> Option<InstallationKey> {
+    if installation.home.is_none() && installation.executable.is_none() {
+        error!("Cannot identify an installation without an executable or home");
+        return None;
     }
+    // R and Rscript in one launch directory share a context. Wrappers in other
+    // directories, architectures, or activation environments remain distinct.
+    let launcher = installation
+        .executable
+        .as_ref()
+        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()));
+    let launch_directory = launcher
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(PathBuf::from);
+    let launcher_name = launcher
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| {
+            let name = name.to_string_lossy().into_owned();
+            match name.to_ascii_lowercase().as_str() {
+                "r" | "r.exe" | "rscript" | "rscript.exe" => "R".to_string(),
+                _ => name,
+            }
+        });
+    let mut environment = installation
+        .environment_variables
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+    environment.sort();
+    Some(InstallationKey {
+        home: installation
+            .home
+            .as_ref()
+            .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone())),
+        launch_directory,
+        launcher_name,
+        architecture: installation.arch.as_ref().map(ToString::to_string),
+        startup: installation.startup_command.clone(),
+        environment,
+    })
 }
 
 pub fn merge_installations(existing: &RInstallation, new: &RInstallation) -> RInstallation {
@@ -346,6 +387,75 @@ mod tests {
         assert_eq!(
             merged.discovered_by,
             vec![DiscoverySource::Locator, DiscoverySource::RVersions]
+        );
+    }
+
+    #[test]
+    fn identity_preserves_wrappers_architectures_and_activation_contexts() {
+        use ret_core::arch::Architecture;
+        let base = RInstallationBuilder::new(None)
+            .executable(Some("/store/wrapper-a/bin/R".into()))
+            .home(Some("/store/native/lib/R".into()))
+            .arch(Some(Architecture::X64))
+            .build();
+        let paired = RInstallationBuilder::from_installation(base.clone())
+            .executable(Some("/store/wrapper-a/bin/Rscript".into()))
+            .build();
+        assert_eq!(
+            super::get_installation_key(&base),
+            super::get_installation_key(&paired)
+        );
+        let wrapper = RInstallationBuilder::from_installation(base.clone())
+            .executable(Some("/store/wrapper-b/bin/R".into()))
+            .build();
+        let architecture = RInstallationBuilder::from_installation(base.clone())
+            .arch(Some(Architecture::X86))
+            .build();
+        let module = RInstallationBuilder::from_installation(base.clone())
+            .startup_command(Some("module load R/a".into()))
+            .build();
+        for variant in [wrapper, architecture, module] {
+            assert_ne!(
+                super::get_installation_key(&base),
+                super::get_installation_key(&variant)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_merges_directory_symlinks_to_the_same_launcher() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("R"), "runtime").unwrap();
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let first = RInstallationBuilder::new(None)
+            .home(Some(real.clone()))
+            .executable(Some(real.join("R")))
+            .build();
+        let second = RInstallationBuilder::new(None)
+            .home(Some(alias.clone()))
+            .executable(Some(alias.join("R")))
+            .build();
+        assert_eq!(
+            super::get_installation_key(&first),
+            super::get_installation_key(&second)
+        );
+    }
+
+    #[test]
+    fn named_wrappers_in_one_directory_do_not_collapse() {
+        let make = |name: &str| {
+            RInstallationBuilder::new(None)
+                .home(Some("/runtime/lib/R".into()))
+                .executable(Some(PathBuf::from("/launchers").join(name)))
+                .build()
+        };
+        assert_ne!(
+            super::get_installation_key(&make("R-project-a")),
+            super::get_installation_key(&make("R-project-b"))
         );
     }
 }

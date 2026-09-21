@@ -93,7 +93,7 @@ fn create_unknown_installation_from_raw(
 ) -> RInstallation {
     RInstallationBuilder::new(infer_fallback_kind(&env.executable, global_search_paths))
         .executable(Some(env.executable.clone()))
-        .home(infer_home_from_executable(&env.executable))
+        .home(env.home.clone())
         .known_executables(env.known_executables.clone())
         .symlinks(env.symlinks.clone())
         .build()
@@ -109,25 +109,4 @@ fn infer_fallback_kind(
     } else {
         None
     }
-}
-
-fn infer_home_from_executable(executable: &std::path::Path) -> Option<PathBuf> {
-    let parent = executable.parent()?;
-    let parent_name = parent.file_name()?.to_string_lossy().to_ascii_lowercase();
-
-    if parent_name == "bin" {
-        return parent.parent().map(|path| path.to_path_buf());
-    }
-    if parent_name == "x64" {
-        let bin = parent.parent()?;
-        if bin
-            .file_name()?
-            .to_string_lossy()
-            .eq_ignore_ascii_case("bin")
-        {
-            return bin.parent().map(|path| path.to_path_buf());
-        }
-    }
-
-    None
 }

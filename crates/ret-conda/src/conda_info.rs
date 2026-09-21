@@ -3,7 +3,7 @@
 
 use log::{error, trace, warn};
 use ret_fs::path::resolve_symlink;
-use ret_r_utils::executable::new_silent_command;
+use ret_r_utils::{executable::new_silent_command, process::probe_output};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -32,10 +32,7 @@ impl CondaInfo {
             resolve_symlink(&executable).unwrap_or(executable)
         };
 
-        let result = new_silent_command(&executable)
-            .arg("info")
-            .arg("--json")
-            .output();
+        let result = probe_output(new_silent_command(&executable).args(["info", "--json"]));
         trace!("Executing Conda manager: {:?} info --json", executable);
 
         match result {

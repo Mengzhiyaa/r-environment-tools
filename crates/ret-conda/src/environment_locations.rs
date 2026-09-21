@@ -230,7 +230,12 @@ fn get_known_conda_install_locations(environment: &dyn Environment) -> Vec<PathB
     }
 
     // Environment variables
-    for var in ["CONDA_ROOT", "CONDA_PREFIX"] {
+    for var in [
+        "CONDA_ROOT",
+        "CONDA_PREFIX",
+        "MAMBA_ROOT_PREFIX",
+        "CONDA_DIR",
+    ] {
         if let Some(val) = environment.get_env_var(var.to_string()) {
             known_paths.push(expand_path(PathBuf::from(val)));
         }
@@ -315,7 +320,10 @@ fn resolve_conda_executable(exe: &Path) -> Option<PathBuf> {
     }
 
     // Bare command names like `conda` or `mamba` need PATH lookup.
-    if exe.parent().is_none() {
+    if exe
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+    {
         let name = exe.file_name()?.to_string_lossy().to_ascii_lowercase();
         if name.starts_with("mamba") || name.starts_with("micromamba") {
             let found = find_mamba_binary()?;
@@ -471,5 +479,30 @@ mod tests {
         symlink(&real, &link).unwrap();
 
         assert_eq!(get_conda_dir_from_exe_path(&link), Some(root));
+    }
+    struct MambaEnvironment(PathBuf);
+    impl Environment for MambaEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_env_var(&self, key: String) -> Option<String> {
+            (key == "MAMBA_ROOT_PREFIX").then(|| self.0.to_string_lossy().into_owned())
+        }
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+    #[test]
+    fn detached_micromamba_root_is_discovered_from_its_environment_variable() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("custom mamba");
+        let prefix = root.join("envs/r-analysis");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        let locations = get_known_conda_install_locations(&MambaEnvironment(root.clone()));
+        assert!(locations.contains(&root));
+        assert!(get_environments(&root).contains(&prefix));
     }
 }

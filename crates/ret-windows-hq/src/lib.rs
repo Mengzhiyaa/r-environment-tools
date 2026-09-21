@@ -18,7 +18,7 @@ use ret_core::{
     reporter::Reporter,
     Locator, LocatorKind, RefreshStatePersistence,
 };
-use ret_r_utils::{env::ResolvedRInstallation, executable::find_executable};
+use ret_r_utils::{env::ResolvedRInstallation, executable::find_executables};
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -111,16 +111,7 @@ impl Locator for WindowsHq {
                 {
                     continue;
                 }
-                // Skip 'Current' / 'current' symlinks (handled separately).
-                if version_dir
-                    .file_name()
-                    .map(|n| n.to_string_lossy().eq_ignore_ascii_case("current"))
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-
-                if let Some(executable) = find_executable(&version_dir) {
+                for executable in find_executables(&version_dir) {
                     if self.reported.contains_key(&executable) {
                         continue;
                     }
@@ -145,10 +136,6 @@ impl Locator for WindowsHq {
 /// These are directories where the CRAN installer, rig, and other tools
 /// place R version directories (e.g. R-4.3.2/).
 fn windows_hq_dirs(environment: &dyn Environment) -> Vec<PathBuf> {
-    if !cfg!(windows) {
-        return vec![];
-    }
-
     let mut dirs = Vec::new();
 
     // %PROGRAMFILES%\R  (usually C:\Program Files\R)
@@ -156,6 +143,7 @@ fn windows_hq_dirs(environment: &dyn Environment) -> Vec<PathBuf> {
         environment.get_env_var("PROGRAMFILES".to_string()),
         environment.get_env_var("ProgramFiles".to_string()),
         environment.get_env_var("ProgramW6432".to_string()),
+        environment.get_env_var("ProgramFiles(x86)".to_string()),
     ]
     .into_iter()
     .flatten()
@@ -166,18 +154,15 @@ fn windows_hq_dirs(environment: &dyn Environment) -> Vec<PathBuf> {
         if seen.insert(base.clone()) {
             dirs.push(PathBuf::from(base).join("R"));
             // ARM64 Windows: rig installs R in R-aarch64/
-            if is_arm64() {
-                dirs.push(PathBuf::from(base).join("R-aarch64"));
-            }
+            dirs.push(PathBuf::from(base).join("R-aarch64"));
         }
     }
 
     // Fallback if no env vars provided a location.
     if dirs.is_empty() {
         dirs.push(PathBuf::from(r"C:\Program Files\R"));
-        if is_arm64() {
-            dirs.push(PathBuf::from(r"C:\Program Files\R-aarch64"));
-        }
+        dirs.push(PathBuf::from(r"C:\Program Files\R-aarch64"));
+        dirs.push(PathBuf::from(r"C:\Program Files (x86)\R"));
     }
 
     // %LOCALAPPDATA%\Programs\R  (user-level installs without admin)
@@ -186,13 +171,11 @@ fn windows_hq_dirs(environment: &dyn Environment) -> Vec<PathBuf> {
         .or_else(|| env::var("LOCALAPPDATA").ok())
     {
         dirs.push(PathBuf::from(&local_app_data).join("Programs").join("R"));
-        if is_arm64() {
-            dirs.push(
-                PathBuf::from(&local_app_data)
-                    .join("Programs")
-                    .join("R-aarch64"),
-            );
-        }
+        dirs.push(
+            PathBuf::from(&local_app_data)
+                .join("Programs")
+                .join("R-aarch64"),
+        );
     }
 
     dirs.sort();
@@ -200,12 +183,10 @@ fn windows_hq_dirs(environment: &dyn Environment) -> Vec<PathBuf> {
     dirs
 }
 
-fn is_arm64() -> bool {
-    env::consts::ARCH == "aarch64"
-}
-
 fn is_windows_hq_path(path: &Path, hq_dirs: &[PathBuf]) -> bool {
-    hq_dirs.iter().any(|hq| path.starts_with(hq))
+    hq_dirs
+        .iter()
+        .any(|hq| ret_r_utils::executable::is_path_within(path, hq))
 }
 
 #[cfg(test)]
@@ -233,5 +214,42 @@ mod tests {
             Path::new(r"C:\ProgramData\chocolatey\shims\R.exe"),
             &hq_dirs
         ));
+    }
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+    struct Env;
+    impl Environment for Env {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_env_var(&self, key: String) -> Option<String> {
+            match key.as_str() {
+                "PROGRAMFILES" | "ProgramFiles" | "ProgramW6432" => Some("programs".into()),
+                "ProgramFiles(x86)" => Some("programs-x86".into()),
+                "LOCALAPPDATA" => Some("user-local".into()),
+                _ => None,
+            }
+        }
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+    #[test]
+    fn arm64_and_x86_roots_are_included_independently_of_ret_architecture() {
+        let roots = windows_hq_dirs(&Env);
+        for path in [
+            "programs/R",
+            "programs/R-aarch64",
+            "programs-x86/R",
+            "user-local/Programs/R-aarch64",
+        ] {
+            assert!(roots.contains(&PathBuf::from(path)), "missing {path}");
+        }
     }
 }

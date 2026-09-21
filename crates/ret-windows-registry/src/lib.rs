@@ -97,12 +97,16 @@ impl Locator for WindowsRegistry {
             return None;
         }
 
-        if let Some(installation) = self.reported_executables.get(&env.executable) {
-            return Some(installation);
-        }
-
-        let home = env.home.as_ref()?;
-        if !looks_like_windows_r_path(home) {
+        let registered = registry_installations().iter().any(|path| {
+            paths_match(path, &env.executable)
+                || env.home.as_ref().is_some_and(|home| {
+                    REnv::new(path.clone(), None, None)
+                        .home
+                        .as_ref()
+                        .is_some_and(|registered_home| paths_match(home, registered_home))
+                })
+        });
+        if !registered {
             return None;
         }
 
@@ -133,12 +137,10 @@ impl Locator for WindowsRegistry {
     }
 }
 
-fn looks_like_windows_r_path(path: &Path) -> bool {
-    let path = path.to_string_lossy();
-    // Standard admin install: C:\Program Files\R\R-x.x.x
-    path.contains(r"\Program Files\R\")
-        // User-level install: any path containing \R\R-x.x.x pattern
-        || path.contains(r"\R\R-")
+fn paths_match(left: &Path, right: &Path) -> bool {
+    let left = std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    ret_fs::path::norm_case(left) == ret_fs::path::norm_case(right)
 }
 
 #[cfg(windows)]
@@ -155,11 +157,17 @@ fn registry_installations() -> Vec<PathBuf> {
         RegKey::predef(HKEY_LOCAL_MACHINE),
         RegKey::predef(HKEY_CURRENT_USER),
     ];
-    let key_paths = [r"SOFTWARE\R-core\R", r"SOFTWARE\WOW6432Node\R-core\R"];
+    let key_paths = [
+        r"SOFTWARE\R-core\R",
+        r"SOFTWARE\R-core\R32",
+        r"SOFTWARE\R-core\R64",
+    ];
 
     for hive in &hives {
         for key_path in &key_paths {
-            collect_installations_from_key(hive, key_path, &mut installations);
+            for view in [KEY_WOW64_32KEY, KEY_WOW64_64KEY] {
+                collect_installations_from_key(hive, key_path, view, &mut installations);
+            }
         }
     }
 
@@ -172,27 +180,26 @@ fn registry_installations() -> Vec<PathBuf> {
 fn collect_installations_from_key(
     hive: &winreg::RegKey,
     key_path: &str,
+    view: u32,
     installations: &mut Vec<PathBuf>,
 ) {
-    let Ok(root) = hive.open_subkey(key_path) else {
+    use winreg::enums::KEY_READ;
+    let Ok(root) = hive.open_subkey_with_flags(key_path, KEY_READ | view) else {
         return;
     };
-    for subkey_name in root.enum_keys().flatten() {
-        let Ok(version_key) = root.open_subkey(&subkey_name) else {
-            continue;
-        };
-        let Ok(install_path) = version_key.get_value::<String, _>("InstallPath") else {
-            continue;
-        };
-        let base = PathBuf::from(install_path);
-        for candidate in [
-            base.join("bin").join("x64").join("R.exe"),
-            base.join("bin").join("R.exe"),
-        ] {
-            if candidate.exists() {
-                installations.push(candidate);
+    let mut prefixes = Vec::new();
+    if let Ok(path) = root.get_value::<String, _>("InstallPath") {
+        prefixes.push(PathBuf::from(path));
+    }
+    for name in root.enum_keys().flatten() {
+        if let Ok(version) = root.open_subkey_with_flags(name, KEY_READ | view) {
+            if let Ok(path) = version.get_value::<String, _>("InstallPath") {
+                prefixes.push(PathBuf::from(path));
             }
         }
+    }
+    for prefix in prefixes {
+        installations.extend(ret_r_utils::executable::find_executables(prefix));
     }
 }
 
@@ -221,5 +228,51 @@ mod tests {
             .expect("registry entry should be authoritative");
         assert_eq!(installation.kind, Some(RInstallationKind::WindowsRegistry));
         assert_eq!(installation.home, env.home);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod registry_tests {
+    use super::*;
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+
+    struct Fixture(String);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn both_root_and_version_install_paths_use_shared_executable_layouts() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_home = temp.path().join("root");
+        let version_home = temp.path().join("version");
+        let arm = root_home.join("bin/aarch64/R.exe");
+        let x86 = version_home.join("bin/i386/R.exe");
+        for path in [&arm, &x86] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "runtime").unwrap();
+        }
+        let fixture = Fixture(format!(
+            r"Software\ret-path-tests-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let hive = RegKey::predef(HKEY_CURRENT_USER);
+        let (root, _) = hive.create_subkey(&fixture.0).unwrap();
+        root.set_value("InstallPath", &root_home.to_string_lossy().as_ref())
+            .unwrap();
+        let (version, _) = root.create_subkey("4.1.3").unwrap();
+        version
+            .set_value("InstallPath", &version_home.to_string_lossy().as_ref())
+            .unwrap();
+        let mut found = Vec::new();
+        collect_installations_from_key(&hive, &fixture.0, 0, &mut found);
+        assert!(found.contains(&arm));
+        assert!(found.contains(&x86));
     }
 }

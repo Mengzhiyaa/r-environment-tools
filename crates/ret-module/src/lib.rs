@@ -10,6 +10,7 @@
 // by temporarily loading the module and querying the resulting PATH.
 
 use log::trace;
+use ret_core::shell::quote_shell_argument;
 use ret_core::{
     arch::Architecture,
     env::REnv,
@@ -19,7 +20,10 @@ use ret_core::{
     reporter::Reporter,
     Locator, LocatorKind,
 };
-use ret_r_utils::env::ResolvedRInstallation;
+use ret_r_utils::{
+    env::{resolve_with_startup, ResolvedRInstallation},
+    process::probe_output,
+};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -106,31 +110,22 @@ impl Locator for EnvironmentModule {
         for module_name in &r_modules {
             // Resolve the R binary by loading the module in a subshell and
             // extracting the PATH it adds.
-            if let Some(r_binary) = resolve_r_from_module(modulecmd, module_name) {
-                if let Some(resolved) = ResolvedRInstallation::from(&r_binary) {
-                    let env = resolved.to_r_env();
-                    // A successfully loaded module is authoritative; module
-                    // trees are not restricted to the common path names above.
-                    if let Some(installation) = self.installation_from_env(&env) {
-                        let installation = RInstallationBuilder::from_installation(installation)
-                            .startup_command(Some(build_module_startup_command(
-                                modulecmd,
-                                module_name,
-                            )))
-                            .locator_metadata(Some(LocatorMetadata::Module {
-                                module_name: module_name.clone(),
-                                startup_command: build_module_startup_command(
-                                    modulecmd,
-                                    module_name,
-                                ),
-                            }))
-                            .build();
-                        resolved.add_to_cache(installation.clone());
-                        if let Some(manager) = &installation.manager {
-                            reporter.report_manager(manager);
-                        }
-                        reporter.report_installation(&installation);
+            if let Some(resolved) = resolve_r_installation_from_module(modulecmd, module_name) {
+                let env = resolved.to_r_env();
+                // A successfully loaded module is authoritative; module
+                // trees are not restricted to the common path names above.
+                if let Some(installation) = self.installation_from_env(&env) {
+                    let installation = RInstallationBuilder::from_installation(installation)
+                        .startup_command(Some(build_module_startup_command(modulecmd, module_name)))
+                        .locator_metadata(Some(LocatorMetadata::Module {
+                            module_name: module_name.clone(),
+                            startup_command: build_module_startup_command(modulecmd, module_name),
+                        }))
+                        .build();
+                    if let Some(manager) = &installation.manager {
+                        reporter.report_manager(manager);
                     }
+                    reporter.report_installation(&installation);
                 }
             }
         }
@@ -138,7 +133,19 @@ impl Locator for EnvironmentModule {
 }
 
 pub fn build_module_startup_command(modulecmd: &Path, module_name: &str) -> String {
-    format!("eval $({} sh load {})", modulecmd.display(), module_name)
+    format!(
+        "_ret_module_code=\"$({} sh load {})\" && eval \"$_ret_module_code\"",
+        quote_shell_argument(&modulecmd.to_string_lossy()),
+        quote_shell_argument(module_name)
+    )
+}
+
+/// Resolve both the launcher and its metadata in the loaded module environment.
+pub fn resolve_r_installation_from_module(
+    modulecmd: &Path,
+    module_name: &str,
+) -> Option<ResolvedRInstallation> {
+    resolve_with_startup(None, &build_module_startup_command(modulecmd, module_name))
 }
 
 /// Paths characteristic of Environment Modules / Lmod installations.
@@ -214,9 +221,7 @@ pub fn find_modulecmd(environment: &dyn Environment) -> Option<PathBuf> {
 /// List available R module names by running `modulecmd sh -t avail R`.
 fn list_r_modules(modulecmd: &Path) -> Vec<String> {
     // Lmod and classic modulecmd output to stderr with -t flag.
-    let output = Command::new(modulecmd)
-        .args(["sh", "-t", "avail", "R"])
-        .output();
+    let output = probe_output(Command::new(modulecmd).args(["sh", "-t", "avail", "R"]));
 
     let Ok(output) = output else {
         trace!("Failed to execute modulecmd");
@@ -268,12 +273,11 @@ fn is_r_module_name(name: &str) -> bool {
 /// Runs: `eval $(modulecmd sh load <module>) && which R`
 pub fn resolve_r_from_module(modulecmd: &Path, module_name: &str) -> Option<PathBuf> {
     let script = format!(
-        "eval $({} sh load {}) 2>/dev/null && which R",
-        modulecmd.display(),
-        module_name
+        "{} 2>/dev/null && command -v R",
+        build_module_startup_command(modulecmd, module_name)
     );
 
-    let output = Command::new("sh").args(["-c", &script]).output().ok()?;
+    let output = probe_output(Command::new("sh").args(["-c", &script])).ok()?;
 
     if !output.status.success() {
         trace!("Failed to resolve R from module {}", module_name);
@@ -343,5 +347,67 @@ mod tests {
             installation.kind,
             Some(ret_core::r_installation::RInstallationKind::EnvironmentModule)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn module_resolution_preserves_spaces_quotes_and_literal_shell_characters() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("R project's bin");
+        std::fs::create_dir(&bin).unwrap();
+        let executable = bin.join("R");
+        std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let modulecmd = temp.path().join("module tool's cmd");
+        let module_name = "R/4.4;printf expanded";
+        let script = format!(
+            "#!/bin/sh\n[ \"$1\" = sh ] && [ \"$2\" = load ] && [ \"$3\" = {} ] || exit 1\nprintf '%s\\n' {}\n",
+            ret_core::shell::quote_shell_argument(module_name),
+            ret_core::shell::quote_shell_argument(&format!("export PATH={}:$PATH", ret_core::shell::quote_shell_argument(&bin.to_string_lossy())))
+        );
+        std::fs::write(&modulecmd, script).unwrap();
+        std::fs::set_permissions(&modulecmd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            super::resolve_r_from_module(&modulecmd, module_name),
+            Some(executable)
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod activation_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn module_probe_runs_with_activation_and_does_not_share_plain_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("bin");
+        fs_create(&bin);
+        let executable = bin.join("R");
+        std::fs::write(&executable, format!(
+            "#!/bin/sh\n[ -n \"$RET_MODULE_VERSION\" ] || exit 7\nprintf 'ret-r-installation-info\\n%s\\n%s\\nx86_64\\n' \"$RET_MODULE_VERSION\" {}\n",
+            quote_shell_argument(&temp.path().to_string_lossy())
+        )).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let modulecmd = temp.path().join("modulecmd");
+        std::fs::write(&modulecmd, format!(
+            "#!/bin/sh\ncase \"$3\" in R/a) version=4.4.0;; R/b) version=4.5.0;; *) exit 9;; esac\nprintf 'export RET_MODULE_VERSION=%s; %s\\n' \"$version\" {}\n",
+            quote_shell_argument(&format!("export PATH={}:$PATH", quote_shell_argument(&bin.to_string_lossy())))
+        )).unwrap();
+        std::fs::set_permissions(&modulecmd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let first = resolve_r_installation_from_module(&modulecmd, "R/a").unwrap();
+        let second = resolve_r_installation_from_module(&modulecmd, "R/b").unwrap();
+        assert_eq!(first.executable, executable);
+        assert_eq!(first.version, "4.4.0");
+        assert_eq!(second.version, "4.5.0");
+        assert!(ResolvedRInstallation::from(&executable).is_none());
+        assert!(resolve_r_installation_from_module(&modulecmd, "missing").is_none());
+        assert!(resolve_r_from_module(&modulecmd, "missing").is_none());
+    }
+
+    fn fs_create(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
     }
 }

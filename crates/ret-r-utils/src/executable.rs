@@ -34,104 +34,126 @@ pub enum ExecutableResult {
     NotFound,
 }
 
-#[cfg(windows)]
+/// Ordered layouts shared by discovery, directory resolution and broken-link reporting.
+/// The platform and architecture arguments keep the rules testable on every host.
+pub fn executable_candidates_for_platform(
+    root: &Path,
+    windows: bool,
+    architecture: &str,
+) -> Vec<PathBuf> {
+    let mut directories = if windows {
+        vec![
+            root.join("Scripts"),
+            root.join("Library").join("bin"),
+            root.join("Library/lib/R/bin"),
+            root.join("Library/lib64/R/bin"),
+        ]
+    } else {
+        Vec::new()
+    };
+    directories.push(root.join("bin"));
+    if windows {
+        let arches = match architecture {
+            "aarch64" | "arm64" => ["aarch64", "arm64", "x64", "i386"],
+            "x86" | "i386" | "i686" => ["i386", "x64", "aarch64", "arm64"],
+            _ => ["x64", "aarch64", "arm64", "i386"],
+        };
+        for arch in arches {
+            directories.push(root.join("bin").join(arch));
+            // Also accept a bin directory supplied directly by the caller.
+            directories.push(root.join(arch));
+        }
+    }
+    directories.extend([
+        root.join("lib").join("R").join("bin"),
+        root.join("lib64").join("R").join("bin"),
+        root.join("Resources").join("bin"),
+        root.to_path_buf(),
+    ]);
+    let names = if windows {
+        ["R.exe", "Rscript.exe"]
+    } else {
+        ["R", "Rscript"]
+    };
+    directories
+        .into_iter()
+        .flat_map(|directory| names.map(|name| directory.join(name)))
+        .collect()
+}
+
+pub fn executable_candidates(root: &Path) -> Vec<PathBuf> {
+    executable_candidates_for_platform(root, cfg!(windows), std::env::consts::ARCH)
+}
+
 pub fn find_executable(install_path: &Path) -> Option<PathBuf> {
-    [
-        install_path.join("Scripts").join("R.exe"),
-        install_path.join("Scripts").join("Rscript.exe"),
-        install_path.join("Library").join("bin").join("R.exe"),
-        install_path.join("Library").join("bin").join("Rscript.exe"),
-        install_path.join("bin").join("x64").join("R.exe"),
-        install_path.join("bin").join("R.exe"),
-        install_path.join("bin").join("Rscript.exe"),
-        install_path.join("R.exe"),
-        install_path.join("Rscript.exe"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
+    find_executables(install_path).into_iter().next()
 }
 
-#[cfg(unix)]
-pub fn find_executable(install_path: &Path) -> Option<PathBuf> {
-    [
-        install_path.join("bin").join("R"),
-        install_path.join("bin").join("Rscript"),
-        install_path.join("R"),
-        install_path.join("Rscript"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-}
-
-#[cfg(windows)]
 pub fn find_executable_or_broken(install_path: &Path) -> ExecutableResult {
-    let candidates = [
-        install_path.join("Scripts").join("R.exe"),
-        install_path.join("Scripts").join("Rscript.exe"),
-        install_path.join("Library").join("bin").join("R.exe"),
-        install_path.join("Library").join("bin").join("Rscript.exe"),
-        install_path.join("bin").join("x64").join("R.exe"),
-        install_path.join("bin").join("R.exe"),
-        install_path.join("bin").join("Rscript.exe"),
-        install_path.join("R.exe"),
-        install_path.join("Rscript.exe"),
-    ];
-
-    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
-        return ExecutableResult::Found(path.clone());
+    if is_broken_symlink(install_path) {
+        return ExecutableResult::Broken(install_path.to_path_buf());
     }
-    if let Some(path) = candidates.iter().find(|path| is_broken_symlink(path)) {
-        return ExecutableResult::Broken(path.clone());
+    if let Some(path) = find_executable(install_path) {
+        return ExecutableResult::Found(path);
     }
-    ExecutableResult::NotFound
-}
-
-#[cfg(unix)]
-pub fn find_executable_or_broken(install_path: &Path) -> ExecutableResult {
-    let candidates = [
-        install_path.join("bin").join("R"),
-        install_path.join("bin").join("Rscript"),
-        install_path.join("R"),
-        install_path.join("Rscript"),
-    ];
-
-    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
-        return ExecutableResult::Found(path.clone());
-    }
-    if let Some(path) = candidates.iter().find(|path| is_broken_symlink(path)) {
-        return ExecutableResult::Broken(path.clone());
+    if let Some(path) = executable_candidates(install_path)
+        .into_iter()
+        .find(|path| is_broken_symlink(path))
+    {
+        return ExecutableResult::Broken(path);
     }
     ExecutableResult::NotFound
 }
 
 pub fn find_executables<T: AsRef<Path>>(install_path: T) -> Vec<PathBuf> {
-    let install_path = install_path.as_ref();
-    let mut directories = vec![install_path.to_path_buf()];
-
-    let bin = install_path.join("bin");
-    if bin.is_dir() {
-        directories.push(bin.clone());
-        if cfg!(windows) {
-            directories.push(bin.join("x64"));
-            directories.push(bin.join("i386"));
-        }
+    let root = install_path.as_ref();
+    if root.is_file() {
+        return if is_r_executable_name(root) {
+            vec![root.to_path_buf()]
+        } else {
+            Vec::new()
+        };
     }
-
-    let mut executables = vec![];
+    let candidates = executable_candidates(root);
+    let mut executables = candidates
+        .iter()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect::<Vec<_>>();
+    // Retain support for case variants without changing the preferred candidate order.
+    let directories = candidates
+        .iter()
+        .filter_map(|path| path.parent())
+        .collect::<std::collections::BTreeSet<_>>();
     for directory in directories {
-        if let Ok(entries) = fs::read_dir(&directory) {
-            for entry in entries.filter_map(Result::ok) {
-                let file = entry.path();
-                if file.is_file() && is_r_executable_name(&file) {
-                    executables.push(file);
+        if let Ok(entries) = fs::read_dir(directory) {
+            let mut extra = entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file() && is_r_executable_name(path))
+                .collect::<Vec<_>>();
+            extra.sort();
+            for path in extra {
+                if !executables.contains(&path) {
+                    executables.push(path);
                 }
             }
         }
     }
-
-    executables.sort();
-    executables.dedup();
     executables
+}
+
+pub fn is_path_within(path: &Path, root: &Path) -> bool {
+    // Preserve a direct lexical match before normalizing case. This matters on
+    // Windows when `path` does not exist yet (for example, a Chocolatey shim):
+    // `norm_case` cannot expand a nonexistent path, while the original paths
+    // still provide an unambiguous containment check.
+    path.starts_with(root)
+        || norm_case(path).starts_with(norm_case(root))
+        || match (fs::canonicalize(path), fs::canonicalize(root)) {
+            (Ok(path), Ok(root)) => path.starts_with(root),
+            _ => false,
+        }
 }
 
 pub fn normalize_executable_paths<I>(paths: I) -> Vec<PathBuf>
@@ -213,4 +235,95 @@ pub fn new_silent_command(program: impl AsRef<OsStr>) -> std::process::Command {
 #[cfg(not(target_os = "windows"))]
 pub fn new_silent_command(program: impl AsRef<OsStr>) -> std::process::Command {
     std::process::Command::new(program)
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+
+    #[test]
+    fn path_within_accepts_nonexistent_descendant() {
+        let temp = tempfile::tempdir().unwrap();
+        let child = temp
+            .path()
+            .join("bin")
+            .join(if cfg!(windows) { "R.exe" } else { "R" });
+
+        assert!(is_path_within(&child, temp.path()));
+        assert!(!is_path_within(
+            &temp.path().with_file_name("sibling").join("R"),
+            temp.path()
+        ));
+    }
+
+    #[test]
+    fn directory_helpers_share_unix_layouts() {
+        for layout in [
+            "bin/R",
+            "lib/R/bin/R",
+            "lib64/R/bin/R",
+            "Resources/bin/R",
+            "R",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let executable = temp.path().join(layout);
+            fs::create_dir_all(executable.parent().unwrap()).unwrap();
+            fs::write(&executable, "runtime").unwrap();
+            if cfg!(unix) {
+                assert_eq!(find_executable(temp.path()), Some(executable.clone()));
+                assert!(find_executables(temp.path()).contains(&executable));
+                assert!(
+                    matches!(find_executable_or_broken(temp.path()), ExecutableResult::Found(path) if path == executable)
+                );
+            }
+            assert!(
+                executable_candidates_for_platform(temp.path(), false, "x86_64")
+                    .contains(&executable)
+            );
+        }
+    }
+
+    #[test]
+    fn windows_layouts_include_every_architecture_and_conda_entrypoint() {
+        let root = Path::new("prefix");
+        for architecture in ["x86_64", "aarch64", "x86"] {
+            let candidates = executable_candidates_for_platform(root, true, architecture);
+            for layout in [
+                "bin/x64/R.exe",
+                "bin/i386/R.exe",
+                "bin/aarch64/R.exe",
+                "bin/arm64/R.exe",
+                "Scripts/R.exe",
+                "Library/bin/R.exe",
+            ] {
+                assert!(candidates.contains(&root.join(layout)), "missing {layout}");
+            }
+            let preferred = match architecture {
+                "aarch64" => "aarch64",
+                "x86" => "i386",
+                _ => "x64",
+            };
+            let first = candidates
+                .iter()
+                .position(|path| path == &root.join("bin").join(preferred).join("R.exe"))
+                .unwrap();
+            for other in ["x64", "i386", "aarch64"] {
+                if other != preferred {
+                    assert!(first < candidates.iter().position(|path| path == &root.join("bin").join(other).join("R.exe")).unwrap());
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn internal_layout_broken_links_are_reported() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("lib64/R/bin/R");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("missing", &executable).unwrap();
+        assert!(
+            matches!(find_executable_or_broken(temp.path()), ExecutableResult::Broken(path) if path == executable)
+        );
+    }
 }

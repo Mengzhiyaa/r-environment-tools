@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use ret::{
@@ -75,7 +75,7 @@ enum Commands {
     Server,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Commands::Find {
@@ -115,7 +115,13 @@ fn main() {
             cache_directory,
             verbose,
             json,
-        } => resolve_report_stdio(executable, verbose, cache_directory, json),
+        } => {
+            if let Err(message) = resolve_report_stdio(executable, verbose, cache_directory, json) {
+                eprintln!("{message}");
+                return ExitCode::FAILURE;
+            }
+        }
         Commands::Server => start_jsonrpc_server(),
     }
+    ExitCode::SUCCESS
 }

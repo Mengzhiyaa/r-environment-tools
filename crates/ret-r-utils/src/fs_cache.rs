@@ -24,7 +24,7 @@ struct CacheEntry {
 }
 
 pub fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
-    cache_directory.join(format!("{}.5.json", generate_hash(executable)))
+    cache_directory.join(format!("{}.6.json", generate_hash(executable)))
 }
 
 pub fn delete_cache_file(cache_directory: &Path, executable: &PathBuf) {
@@ -63,7 +63,7 @@ pub fn get_cache_from_file(
                 Some(stored_ctime) => metadata.created().ok() == Some(stored_ctime),
                 None => true,
             };
-            mtime_valid && ctime_valid
+            metadata.is_file() && mtime_valid && ctime_valid
         } else {
             false
         }

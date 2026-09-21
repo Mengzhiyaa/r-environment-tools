@@ -25,13 +25,15 @@ use std::{
 pub struct Homebrew {
     reported_executables: Arc<LocatorCache<PathBuf, RInstallation>>,
     manager: Option<EnvManager>,
+    cellars: Vec<PathBuf>,
 }
 
 impl Homebrew {
-    pub fn from(_environment: &dyn Environment) -> Homebrew {
+    pub fn from(environment: &dyn Environment) -> Homebrew {
         Homebrew {
             reported_executables: Arc::new(LocatorCache::new()),
-            manager: find_brew_manager(),
+            manager: find_brew_manager(environment),
+            cellars: configured_cellar_roots(environment),
         }
     }
 
@@ -81,7 +83,13 @@ impl Locator for Homebrew {
 
         let executable = resolve_symlink(&env.executable).unwrap_or(env.executable.clone());
         let home = env.home.clone()?;
-        if !looks_like_homebrew_path(&executable) && !looks_like_homebrew_path(&home) {
+        if !looks_like_homebrew_path(&executable)
+            && !looks_like_homebrew_path(&home)
+            && !self.cellars.iter().any(|root| {
+                ret_r_utils::executable::is_path_within(&home, root)
+                    || ret_r_utils::executable::is_path_within(&executable, root)
+            })
+        {
             return None;
         }
 
@@ -100,15 +108,23 @@ impl Locator for Homebrew {
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Homebrew))
                 .display_name(Some("Homebrew R".to_string()))
-                .executable(Some(executable))
-                .home(Some(home))
+                .executable(Some(env.executable.clone()))
+                .home(Some(home.clone()))
                 .version(env.version.clone())
                 .arch(
                     env.arch
                         .clone()
                         .or_else(|| Some(Architecture::infer_from_path(&env.executable))),
                 )
-                .manager(self.manager.clone())
+                .manager(
+                    home.ancestors()
+                        .find_map(|prefix| {
+                            let brew = prefix.join("bin").join("brew");
+                            brew.is_file()
+                                .then(|| EnvManager::new(brew, EnvManagerType::Homebrew, None))
+                        })
+                        .or_else(|| self.manager.clone()),
+                )
                 .known_executables(Some(known_executables))
                 .symlinks(Some(symlinks))
                 .build(),
@@ -121,8 +137,8 @@ impl Locator for Homebrew {
         }
 
         self.reported_executables.clear();
-        for cellar_root in cellar_roots() {
-            let Ok(formulas) = fs::read_dir(&cellar_root) else {
+        for cellar_root in &self.cellars {
+            let Ok(formulas) = fs::read_dir(cellar_root) else {
                 continue;
             };
             for formula in formulas.filter_map(Result::ok) {
@@ -136,17 +152,12 @@ impl Locator for Homebrew {
                     continue;
                 };
                 for version_dir in versions.filter_map(Result::ok) {
-                    let home = version_dir.path().join("lib").join("R");
-                    let executable = home.join("bin").join("R");
-                    if !executable.exists() {
-                        continue;
-                    }
-
-                    if let Some(resolved) = ResolvedRInstallation::from(&executable) {
-                        let env = resolved.to_r_env();
-                        if let Some(installation) = self.try_from(&env) {
-                            resolved.add_to_cache(installation.clone());
-                            self.insert_and_report(installation, Some(reporter));
+                    for executable in find_executables(version_dir.path()) {
+                        if let Some(resolved) = ResolvedRInstallation::from(&executable) {
+                            if let Some(installation) = self.try_from(&resolved.to_r_env()) {
+                                resolved.add_to_cache(installation.clone());
+                                self.insert_and_report(installation, Some(reporter));
+                            }
                         }
                     }
                 }
@@ -167,17 +178,46 @@ fn looks_like_homebrew_path(path: &Path) -> bool {
     ret_core::homebrew_utils::looks_like_homebrew_path(path)
 }
 
-fn find_brew_manager() -> Option<EnvManager> {
-    for candidate in [
-        PathBuf::from("/opt/homebrew/bin/brew"),
-        PathBuf::from("/usr/local/bin/brew"),
-        PathBuf::from("/home/linuxbrew/.linuxbrew/bin/brew"),
-    ] {
-        if candidate.exists() {
-            return Some(EnvManager::new(candidate, EnvManagerType::Homebrew, None));
+fn configured_cellar_roots(environment: &dyn Environment) -> Vec<PathBuf> {
+    let mut roots = cellar_roots();
+    if let Some(cellar) = environment.get_env_var("HOMEBREW_CELLAR".to_string()) {
+        roots.push(PathBuf::from(cellar));
+    }
+    if let Some(prefix) = environment.get_env_var("HOMEBREW_PREFIX".to_string()) {
+        roots.push(PathBuf::from(prefix).join("Cellar"));
+    }
+    if let Some(path) = environment.get_env_var("PATH".to_string()) {
+        for bin in std::env::split_paths(&path) {
+            if bin.join("brew").is_file() {
+                if let Some(prefix) = bin.parent() {
+                    roots.push(prefix.join("Cellar"));
+                }
+            }
         }
     }
-    None
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn find_brew_manager(environment: &dyn Environment) -> Option<EnvManager> {
+    let mut candidates = Vec::new();
+    if let Some(prefix) = environment.get_env_var("HOMEBREW_PREFIX".to_string()) {
+        candidates.push(PathBuf::from(prefix).join("bin").join("brew"));
+    }
+    if let Some(path) = environment.get_env_var("PATH".to_string()) {
+        candidates.extend(std::env::split_paths(&path).map(|bin| bin.join("brew")));
+    }
+    candidates.extend(
+        cellar_roots()
+            .iter()
+            .filter_map(|cellar| cellar.parent())
+            .map(|prefix| prefix.join("bin").join("brew")),
+    );
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .map(|path| EnvManager::new(path, EnvManagerType::Homebrew, None))
 }
 
 #[cfg(test)]
@@ -256,5 +296,69 @@ mod tests {
         );
 
         assert!(locator.try_from(&env).is_none());
+    }
+}
+
+#[cfg(test)]
+mod custom_root_tests {
+    use super::*;
+    use std::collections::HashMap;
+    struct Env(HashMap<String, String>);
+    impl Environment for Env {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_env_var(&self, key: String) -> Option<String> {
+            self.0.get(&key).cloned()
+        }
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn custom_cellar_prefix_and_path_brew_are_discovery_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("custom brew");
+        let cellar = temp.path().join("packages");
+        let bin = prefix.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("brew"), "brew").unwrap();
+        let env = Env(HashMap::from([
+            (
+                "HOMEBREW_PREFIX".into(),
+                prefix.to_string_lossy().into_owned(),
+            ),
+            (
+                "HOMEBREW_CELLAR".into(),
+                cellar.to_string_lossy().into_owned(),
+            ),
+            (
+                "PATH".into(),
+                std::env::join_paths([&bin])
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ]));
+        let roots = configured_cellar_roots(&env);
+        assert!(roots.contains(&cellar));
+        assert!(roots.contains(&prefix.join("Cellar")));
+        assert_eq!(
+            find_brew_manager(&env).unwrap().executable,
+            bin.join("brew")
+        );
+        if cfg!(unix) {
+            let locator = Homebrew::from(&env);
+            let home = cellar.join("r/4.4/lib/R");
+            let raw = REnv::new(home.join("bin/R"), Some(home), Some("4.4.0".into()));
+            assert_eq!(
+                locator.try_from(&raw).unwrap().kind,
+                Some(RInstallationKind::Homebrew)
+            );
+        }
     }
 }

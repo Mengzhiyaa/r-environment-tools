@@ -288,7 +288,7 @@ impl Conda {
 
         let known_executables = collect_r_executables(prefix, &r_home);
         let symlinks = filter_symlink_paths(known_executables.clone());
-        let preferred_exe = pick_preferred_executable(executable, &known_executables);
+        let preferred_exe = norm_case(executable);
 
         let conda_dir = manager.as_ref().and_then(|m| m.conda_dir.clone());
         let name = get_conda_env_name(prefix, &conda_dir);
@@ -377,12 +377,11 @@ impl Conda {
     /// Returns `None` if the directory doesn't exist, signaling that
     /// we can't infer home without spawning R.
     fn infer_conda_r_home(prefix: &Path) -> Option<PathBuf> {
-        let lib_r = prefix.join("lib").join("R");
-        if lib_r.is_dir() {
-            return Some(norm_case(lib_r));
-        }
-        // Cannot determine R home without spawning R
-        None
+        ["lib/R", "lib64/R", "Library/lib/R", "Library/lib64/R"]
+            .into_iter()
+            .map(|relative| prefix.join(relative))
+            .find(|home| home.is_dir())
+            .map(norm_case)
     }
 
     pub fn get_info_for_telemetry(&self, conda_executable: Option<PathBuf>) -> CondaTelemetryInfo {
@@ -490,7 +489,13 @@ impl Locator for Conda {
         // This ensures PATH-based discovery (version: None) hits the cache
         // for environments already discovered by find().
         if let Some(installation) = self.environments.get(&prefix) {
-            return Some(installation);
+            let arch = env.arch.clone().or(installation.arch.clone());
+            return Some(
+                RInstallationBuilder::from_installation(installation)
+                    .executable(Some(env.executable.clone()))
+                    .arch(arch)
+                    .build(),
+            );
         }
 
         // Try fast path (conda-meta) — resolves metadata without spawning R.
@@ -501,7 +506,7 @@ impl Locator for Conda {
                 let manager = self.get_manager_for_prefix(&prefix);
                 let known_executables = collect_r_executables(&prefix, &r_home);
                 let symlinks = filter_symlink_paths(known_executables.clone());
-                let preferred_exe = pick_preferred_executable(&env.executable, &known_executables);
+                let preferred_exe = env.executable.clone();
                 let conda_dir = manager.as_ref().and_then(|m| m.conda_dir.clone());
                 let name = get_conda_env_name(&prefix, &conda_dir);
 
@@ -596,80 +601,24 @@ fn build_conda_startup_command(prefix: &Path) -> Option<String> {
     if cfg!(windows) {
         None
     } else {
-        Some(format!("conda activate {}", prefix.display()))
+        Some(format!(
+            "conda activate {}",
+            ret_core::shell::quote_shell_argument(&prefix.to_string_lossy())
+        ))
     }
 }
 
 /// Collect all known R executables for a conda environment.
 /// Handles both Unix and Windows layouts.
 fn collect_r_executables(prefix: &Path, r_home: &Path) -> Vec<PathBuf> {
-    let mut exes = vec![];
-
-    if cfg!(windows) {
-        // Windows candidates matching find_executable in ret-r-utils
-        for candidate in [
-            prefix.join("Scripts").join("R.exe"),
-            prefix.join("Scripts").join("Rscript.exe"),
-            prefix.join("Library").join("bin").join("R.exe"),
-            prefix.join("Library").join("bin").join("Rscript.exe"),
-            prefix.join("bin").join("x64").join("R.exe"),
-            prefix.join("bin").join("R.exe"),
-            prefix.join("bin").join("Rscript.exe"),
-        ] {
-            if candidate.exists() {
-                exes.push(norm_case(candidate));
-            }
-        }
-    } else {
-        // Unix candidates
-        for name in ["R", "Rscript"] {
-            let p = prefix.join("bin").join(name);
-            if p.exists() {
-                exes.push(norm_case(p));
-            }
-        }
-    }
-
-    // Also check <r_home>/bin if different from <prefix>
-    let r_home_norm = norm_case(r_home);
-    let prefix_norm = norm_case(prefix);
-    if r_home_norm != prefix_norm {
-        if cfg!(windows) {
-            for name in ["R.exe", "Rscript.exe"] {
-                let p = r_home.join("bin").join(name);
-                if p.exists() {
-                    exes.push(norm_case(p));
-                }
-            }
-        } else {
-            for name in ["R", "Rscript"] {
-                let p = r_home.join("bin").join(name);
-                if p.exists() {
-                    exes.push(norm_case(p));
-                }
-            }
-        }
-    }
-
-    exes.sort();
-    exes.dedup();
-    exes
-}
-
-/// Pick the preferred executable from the collected set.
-/// Prefers `<prefix>/bin/R` (or `R.exe` on Windows).
-fn pick_preferred_executable(found: &Path, known_executables: &[PathBuf]) -> PathBuf {
-    let target = if cfg!(windows) { "R.exe" } else { "R" };
-    known_executables
-        .iter()
-        .find(|p| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().eq_ignore_ascii_case(target))
-                .unwrap_or(false)
-                && p.parent().map(|par| par.ends_with("bin")).unwrap_or(false)
-        })
-        .cloned()
-        .unwrap_or_else(|| norm_case(found))
+    let mut paths = ret_r_utils::executable::find_executables(prefix);
+    paths.extend(ret_r_utils::executable::find_executables(r_home));
+    paths
+        .into_iter()
+        .map(norm_case)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[cfg(test)]
@@ -857,5 +806,22 @@ mod tests {
 
         target.sync_refresh_state_from(&source, &RefreshStateSyncScope::Full);
         assert!(target.environments.contains_key(&prefix));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_command_preserves_special_environment_paths() {
+        let prefix = std::path::Path::new("/opt/envs/R project's $(printf expanded)");
+        let command = super::build_conda_startup_command(prefix).unwrap();
+        let script = format!("conda() {{ printf '%s\\n' \"$#\" \"$1\" \"$2\"; }}; {command}");
+        let output = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("2\nactivate\n{}\n", prefix.display())
+        );
     }
 }

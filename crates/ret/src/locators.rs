@@ -60,7 +60,7 @@ pub fn create_locators_with_conda(
 
     if std::env::consts::OS == "macos" {
         locators.push(Arc::new(MacPorts::new()));
-        locators.push(Arc::new(MacFramework::new()));
+        locators.push(Arc::new(MacFramework::from(environment)));
     }
 
     if std::env::consts::OS != "macos" && std::env::consts::OS != "windows" {

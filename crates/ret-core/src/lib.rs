@@ -17,6 +17,7 @@ pub mod os_environment;
 
 pub mod r_installation;
 pub mod reporter;
+pub mod shell;
 pub mod telemetry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

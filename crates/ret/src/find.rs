@@ -13,12 +13,11 @@ use ret_core::{
     },
     Configuration, Locator, LocatorKind,
 };
-use ret_r_utils::executable::{
-    find_executable, find_executables, should_search_for_installations_in_path,
-};
+use ret_r_utils::executable::{find_executables, should_search_for_installations_in_path};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -189,7 +188,6 @@ pub fn find_and_report_installations(
                     &global_search_paths,
                     reporter,
                     locators,
-                    false,
                     &global_search_paths,
                     DiscoverySource::GlobalPaths,
                 );
@@ -276,7 +274,7 @@ pub fn find_and_report_installations(
 
 #[instrument(skip(reporter, locators, global_search_paths), fields(directory = %directory.display()))]
 pub fn find_r_installations_in_directory_recursive(
-    directory: &PathBuf,
+    directory: &Path,
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     global_search_paths: &[PathBuf],
@@ -292,35 +290,34 @@ pub fn find_r_installations_in_directory_recursive(
             paths,
             reporter,
             locators,
-            true,
             global_search_paths,
             DiscoverySource::ExplicitSearch,
         );
     }
 }
 
-fn collect_recursive_search_paths(directory: &PathBuf, paths: &mut Vec<PathBuf>) {
-    paths.extend([
-        directory.to_path_buf(),
-        directory.join("bin"),
-        directory.join("lib").join("R"),
-        directory.join("lib").join("R").join("bin"),
-        directory.join("Resources"),
-        directory.join("Resources").join("bin"),
-    ]);
-
-    // Environment prefixes are terminal nodes; searching inside package
-    // directories would only rediscover the same installation.
-    if is_conda_env(directory) || is_pixi_env(directory) {
-        return;
-    }
-    if let Ok(reader) = fs::read_dir(directory) {
-        for entry in reader.filter_map(Result::ok) {
-            let is_directory = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
-            let path = entry.path();
-            if is_directory && should_search_for_installations_in_path(&path) {
-                collect_recursive_search_paths(&path, paths);
-            }
+fn collect_recursive_search_paths(directory: &Path, paths: &mut Vec<PathBuf>) {
+    let mut pending = vec![directory.to_path_buf()];
+    let mut visited = HashSet::new();
+    while let Some(directory) = pending.pop() {
+        let Ok(canonical) = fs::canonicalize(&directory) else {
+            continue;
+        };
+        if !visited.insert(canonical) {
+            continue;
+        }
+        paths.push(directory.clone());
+        if is_conda_env(&directory) || is_pixi_env(&directory) {
+            continue;
+        }
+        if let Ok(reader) = fs::read_dir(&directory) {
+            let mut children = reader
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir() && should_search_for_installations_in_path(path))
+                .collect::<Vec<_>>();
+            children.sort();
+            pending.extend(children.into_iter().rev());
         }
     }
 }
@@ -329,7 +326,6 @@ fn find_r_installations_in_paths(
     paths: &[PathBuf],
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
-    explicit_search: bool,
     global_search_paths: &[PathBuf],
     discovery_source: DiscoverySource,
 ) {
@@ -342,11 +338,7 @@ fn find_r_installations_in_paths(
             let item = item.clone();
             let locators = locators.clone();
             scope.spawn(move || {
-                let executables = if explicit_search {
-                    find_executable(&item).into_iter().collect::<Vec<_>>()
-                } else {
-                    find_executables(&item)
-                };
+                let executables = find_executables(&item);
                 identify_r_executables_using_locators(
                     executables,
                     &locators,
@@ -420,5 +412,28 @@ mod tests {
         collect_recursive_search_paths(&temp.path().to_path_buf(), &mut paths);
 
         assert!(!paths.iter().any(|path| path.starts_with(&ignored)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_search_follows_linked_installations_without_cycles() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let target = temp.path().join("external");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(target.join("bin")).unwrap();
+        std::fs::write(target.join("bin/R"), "runtime").unwrap();
+        symlink(&target, workspace.join("linked")).unwrap();
+        symlink(&target, workspace.join("second-link")).unwrap();
+        symlink(&workspace, target.join("cycle")).unwrap();
+        let mut paths = Vec::new();
+        collect_recursive_search_paths(&workspace, &mut paths);
+        assert!(paths.contains(&workspace.join("linked")));
+        assert!(!paths.contains(&workspace.join("second-link")));
+        assert_eq!(paths.len(), 3);
+        assert!(paths
+            .iter()
+            .any(|path| ret_r_utils::executable::find_executable(path).is_some()));
     }
 }

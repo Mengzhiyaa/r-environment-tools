@@ -11,10 +11,11 @@ use ret_core::{
     reporter::Reporter,
     Locator, LocatorKind,
 };
-use ret_module::{
-    build_module_startup_command, find_modulecmd, looks_like_module_path, resolve_r_from_module,
+use ret_module::{build_module_startup_command, find_modulecmd, looks_like_module_path};
+use ret_r_utils::{
+    env::{resolve_with_startup, ResolvedRInstallation},
+    executable::find_executable,
 };
-use ret_r_utils::env::ResolvedRInstallation;
 use std::{
     collections::HashMap,
     env, mem,
@@ -98,32 +99,33 @@ impl RVersions {
                 .as_ref()
                 .map(|modulecmd| build_module_startup_command(modulecmd, module))
         });
+        if entry.module.is_some() && module_startup_command.is_none() {
+            return None;
+        }
         let rversions_overlay = build_rversions_overlay(&entry, module_startup_command.clone());
 
-        let executable = if let Some(home) = &entry.path {
-            let executable = home.join("bin").join("R");
-            if !executable.is_file() {
-                warn!(
-                    "Skipping r-versions entry because {} does not exist",
-                    executable.display()
-                );
-                return None;
-            }
-            executable
-        } else if let (Some(modulecmd), Some(module_name)) = (&self.modulecmd, &entry.module) {
-            resolve_r_from_module(modulecmd, module_name)?
-        } else {
-            debug!("Skipping r-versions entry without a resolvable executable");
-            return None;
+        let executable = match &entry.path {
+            Some(path) => Some(find_executable(path)?),
+            None => None,
         };
-
-        let resolved = ResolvedRInstallation::from(&executable)?;
         let startup_command =
             combine_startup_command(module_startup_command.as_deref(), entry.script.as_deref());
         let environment_variables = entry
             .library
             .as_ref()
             .map(|library| HashMap::from([(String::from("R_LIBS"), library.clone())]));
+        let resolved = if startup_command.is_some() || entry.library.is_some() {
+            let mut startup = startup_command.clone().unwrap_or_else(|| ":".to_string());
+            if let Some(library) = &entry.library {
+                startup.push_str(&format!(
+                    " && export R_LIBS={}",
+                    ret_core::shell::quote_shell_argument(library)
+                ));
+            }
+            resolve_with_startup(executable.as_deref(), &startup)?
+        } else {
+            ResolvedRInstallation::from(executable.as_deref()?)?
+        };
 
         Some(ResolvedRVersionsEntry {
             resolved,
@@ -162,8 +164,14 @@ impl Locator for RVersions {
         }
 
         let matched = self.load_entries().into_iter().find(|entry| {
-            entry.resolved.executable == env.executable
-                || env.home.as_ref() == Some(&entry.resolved.home)
+            entry.startup_command.is_none()
+                && entry.environment_variables.is_none()
+                && (entry.resolved.executable == env.executable
+                    || entry
+                        .resolved
+                        .known_executables
+                        .as_ref()
+                        .is_some_and(|paths| paths.contains(&env.executable)))
         })?;
 
         Some(build_installation_from_env(env, &matched))
@@ -176,7 +184,9 @@ impl Locator for RVersions {
 
         for entry in self.load_entries() {
             let installation = build_installation_from_resolved(&entry.resolved, &entry);
-            entry.resolved.add_to_cache(installation.clone());
+            if entry.startup_command.is_none() && entry.environment_variables.is_none() {
+                entry.resolved.add_to_cache(installation.clone());
+            }
             reporter.report_installation(&installation);
         }
     }
@@ -384,11 +394,15 @@ fn combine_startup_command(
     script: Option<&str>,
 ) -> Option<String> {
     match (module_startup_command, script) {
-        (Some(module_startup_command), Some(script)) => {
-            Some(format!("{module_startup_command} && . {script}"))
-        }
+        (Some(module_startup_command), Some(script)) => Some(format!(
+            "{module_startup_command} && . {}",
+            ret_core::shell::quote_shell_argument(script)
+        )),
         (Some(module_startup_command), None) => Some(module_startup_command.to_string()),
-        (None, Some(script)) => Some(format!(". {script}")),
+        (None, Some(script)) => Some(format!(
+            ". {}",
+            ret_core::shell::quote_shell_argument(script)
+        )),
         (None, None) => None,
     }
 }

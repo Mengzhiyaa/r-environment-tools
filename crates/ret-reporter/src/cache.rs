@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::installation::{get_installation_key, merge_installations};
+use crate::installation::{get_installation_key, merge_installations, InstallationKey};
 use ret_core::{
     manager::EnvManager, r_installation::RInstallation, reporter::Reporter,
     telemetry::TelemetryEvent,
@@ -16,7 +16,7 @@ use std::{
 pub struct CacheReporter {
     reporter: Arc<dyn Reporter>,
     reported_managers: Arc<RwLock<HashMap<PathBuf, EnvManager>>>,
-    reported_installations: Arc<RwLock<HashMap<PathBuf, RInstallation>>>,
+    reported_installations: Arc<RwLock<HashMap<InstallationKey, RInstallation>>>,
 }
 
 impl CacheReporter {

@@ -6,3 +6,4 @@ pub mod env;
 pub mod executable;
 pub mod fs_cache;
 pub mod platform_dirs;
+pub mod process;

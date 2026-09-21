@@ -246,7 +246,7 @@ pub fn resolve_report_stdio(
     verbose: bool,
     cache_directory: Option<PathBuf>,
     json: bool,
-) {
+) -> Result<(), String> {
     initialize_tracing(verbose);
 
     let now = SystemTime::now();
@@ -273,11 +273,16 @@ pub fn resolve_report_stdio(
             println!("{installation}");
             println!("Completed in {}ms", now.elapsed().unwrap().as_millis());
         }
-    } else if !json {
-        eprintln!(
+        Ok(())
+    } else {
+        let message = format!(
             "Could not resolve R installation for {}",
             executable.display()
         );
+        if json {
+            println!("{}", json!({ "error": { "message": &message } }));
+        }
+        Err(message)
     }
 }
 

@@ -57,6 +57,13 @@ impl Environment for EnvironmentApi {
                 env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .filter(|p| p.exists())
                     .collect::<Vec<PathBuf>>();
+            for variable in ["R_HOME", "RSTUDIO_WHICH_R"] {
+                if let Some(path) = self.get_env_var(variable.to_string()) {
+                    paths.push(PathBuf::from(path));
+                }
+            }
+            paths.sort();
+            paths.dedup();
             trace!("Env PATH: {:?}", paths);
             self.global_search_locations
                 .lock()
@@ -91,6 +98,13 @@ impl Environment for EnvironmentApi {
             let mut paths =
                 env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
+            for variable in ["R_HOME", "RSTUDIO_WHICH_R"] {
+                if let Some(path) = self.get_env_var(variable.to_string()) {
+                    paths.push(PathBuf::from(path));
+                }
+            }
+            paths.sort();
+            paths.dedup();
             trace!("Env PATH: {:?}", paths);
             vec![
                 PathBuf::from("/bin"),

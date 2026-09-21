@@ -6,6 +6,21 @@ use std::io::{self, Write};
 
 pub mod server;
 
+/// A validated JSON-RPC string, number, or null ID, preserved without truncation.
+pub type RequestId = serde_json::Value;
+
+fn write_message(message: &str) {
+    let mut stdout = io::stdout().lock();
+    // A disconnected client must not panic worker threads.
+    let _ = write!(
+        stdout,
+        "Content-Length: {}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}",
+        message.len(),
+        message
+    )
+    .and_then(|_| stdout.flush());
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(Debug)]
@@ -22,39 +37,24 @@ pub fn send_message<T: serde::Serialize>(method: &'static str, params: Option<T>
         params,
     };
     let message = serde_json::to_string(&payload).unwrap();
-    print!(
-        "Content-Length: {}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}",
-        message.len(),
-        message
-    );
-    let _ = io::stdout().flush();
+    write_message(&message);
 }
-pub fn send_reply<T: serde::Serialize>(id: u32, payload: Option<T>) {
+pub fn send_reply<T: serde::Serialize>(id: RequestId, payload: Option<T>) {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "result": payload,
         "id": id
     });
     let message = serde_json::to_string(&payload).unwrap();
-    print!(
-        "Content-Length: {}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}",
-        message.len(),
-        message
-    );
-    let _ = io::stdout().flush();
+    write_message(&message);
 }
 
-pub fn send_error(id: Option<u32>, code: i32, message: String) {
+pub fn send_error(id: Option<RequestId>, code: i32, message: String) {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "error": { "code": code, "message": message },
         "id": id
     });
     let message = serde_json::to_string(&payload).unwrap();
-    print!(
-        "Content-Length: {}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}",
-        message.len(),
-        message
-    );
-    let _ = io::stdout().flush();
+    write_message(&message);
 }

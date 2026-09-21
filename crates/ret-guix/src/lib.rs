@@ -100,7 +100,7 @@ impl Locator for Guix {
         Some(
             RInstallationBuilder::new(Some(RInstallationKind::Guix))
                 .display_name(Some("Guix R".to_string()))
-                .executable(Some(resolved_executable.clone()))
+                .executable(Some(env.executable.clone()))
                 .home(Some(home))
                 .version(env.version.clone())
                 .arch(
