@@ -39,6 +39,8 @@ jobs:
         shell: bash
 
       - name: Post coverage started comment
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: ${{ matrix.comment_header }}
@@ -91,7 +93,6 @@ jobs:
           if-no-files-found: ignore
 
       - name: Wait for exact-base coverage
-        if: always()
         run: >-
           python scripts/wait_for_baseline.py
           --repository "${{ github.repository }}"
@@ -105,7 +106,6 @@ jobs:
         shell: bash
 
       - name: Download exact-base coverage
-        if: always()
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: coverage-baseline.yml
@@ -117,7 +117,6 @@ jobs:
           search_artifacts: true
 
       - name: Compare coverage snapshot
-        if: always()
         run: >-
           python scripts/quality_snapshot.py coverage
           --current lcov.info
@@ -128,7 +127,8 @@ jobs:
         shell: bash
 
       - name: Post coverage report
-        if: always() && hashFiles('coverage-report.md') != ''
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && hashFiles('coverage-report.md') != ''
+        continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: ${{ matrix.comment_header }}

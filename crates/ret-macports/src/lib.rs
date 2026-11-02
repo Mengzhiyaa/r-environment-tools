@@ -56,6 +56,7 @@ impl Locator for MacPorts {
                 .display_name(Some("MacPorts R".to_string()))
                 .executable(Some(env.executable.clone()))
                 .home(Some(home))
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch

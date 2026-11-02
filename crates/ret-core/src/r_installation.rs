@@ -582,7 +582,10 @@ fn infer_orthogonal(home: Option<&PathBuf>) -> Option<bool> {
     let home = home?;
     let home_str = home.to_string_lossy();
     if home_str.contains("R.framework") {
-        Some(home_str.contains("R.framework/Versions/"))
+        Some(
+            home_str.contains("R.framework/Versions/")
+                && !home_str.contains("R.framework/Versions/Current/"),
+        )
     } else {
         None
     }

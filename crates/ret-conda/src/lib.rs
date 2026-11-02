@@ -259,6 +259,7 @@ impl Conda {
             .name(name)
             .executable(Some(resolved.executable.clone()))
             .home(Some(resolved.home.clone()))
+            .orthogonal(resolved.orthogonal)
             .version(Some(resolved.version.clone()))
             .arch(Some(resolved.arch.clone()))
             .manager(manager.map(|manager| manager.to_manager()))
@@ -690,6 +691,8 @@ mod tests {
             arch: Architecture::X64,
             known_executables: None,
             symlinks: None,
+            orthogonal: None,
+            metadata_files: Vec::new(),
         };
 
         let installation =

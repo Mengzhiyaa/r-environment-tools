@@ -64,7 +64,11 @@ impl Locator for MacFramework {
                 .map(|name| name.to_string_lossy().to_string())
         });
 
-        let mut extra_executables = find_executables(home.join("bin"));
+        let mut extra_executables = if env.orthogonal == Some(false) {
+            Vec::new()
+        } else {
+            find_executables(home.join("bin"))
+        };
         let versions = home
             .ancestors()
             .find(|path| path.file_name().is_some_and(|name| name == "Versions"))?;
@@ -74,7 +78,7 @@ impl Locator for MacFramework {
             .join("bin")
             .join("R");
         if let Some(target) = resolve_symlink(&current) {
-            if target == executable {
+            if target == executable && env.orthogonal != Some(false) {
                 extra_executables.push(current);
             }
         }
@@ -93,6 +97,7 @@ impl Locator for MacFramework {
                 .display_name(Some("macOS Framework R".to_string()))
                 .executable(Some(env.executable.clone()))
                 .home(Some(home))
+                .orthogonal(env.orthogonal)
                 .version(version)
                 .arch(Some(arch))
                 .known_executables(Some(known_executables))

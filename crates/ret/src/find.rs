@@ -397,7 +397,7 @@ mod tests {
         std::fs::create_dir_all(&r_home).expect("failed to create nested R home");
 
         let mut paths = Vec::new();
-        collect_recursive_search_paths(&temp.path().to_path_buf(), &mut paths);
+        collect_recursive_search_paths(temp.path(), &mut paths);
 
         assert!(paths.contains(&r_home));
     }
@@ -409,7 +409,7 @@ mod tests {
         std::fs::create_dir_all(&ignored).expect("failed to create ignored directory");
 
         let mut paths = Vec::new();
-        collect_recursive_search_paths(&temp.path().to_path_buf(), &mut paths);
+        collect_recursive_search_paths(temp.path(), &mut paths);
 
         assert!(!paths.iter().any(|path| path.starts_with(&ignored)));
     }

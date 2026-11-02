@@ -137,6 +137,7 @@ impl Locator for Pixi {
                 .name(Some(name.clone()))
                 .executable(Some(env.executable.clone()))
                 .home(home)
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch

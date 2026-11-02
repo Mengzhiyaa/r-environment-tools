@@ -216,7 +216,7 @@ fn verify_find_with_executable(executable: &PathBuf, original: &RInstallation) {
     }
 }
 
-/// Check that Conda R environments are correctly discovered (if installed in CI).
+/// Check that the Conda R environment installed by the CI workflows is discovered.
 #[cfg_attr(feature = "ci", test)]
 #[allow(dead_code)]
 fn check_if_conda_r_exists() {
@@ -229,10 +229,12 @@ fn check_if_conda_r_exists() {
         .filter(|i| i.kind == Some(RInstallationKind::Conda))
         .collect();
 
-    if conda_installations.is_empty() {
-        eprintln!("No Conda R installations found in CI (this may be expected)");
-        return;
-    }
+    assert!(
+        conda_installations
+            .iter()
+            .any(|installation| installation.name.as_deref() == Some("r-conda-env")),
+        "CI must discover the r-conda-env environment installed by the workflow; found: {conda_installations:?}"
+    );
 
     for installation in &conda_installations {
         assert!(

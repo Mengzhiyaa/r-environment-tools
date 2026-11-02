@@ -1,11 +1,13 @@
 name: Lint
 
 on:
+  workflow_call:
   pull_request:
   push:
-    branches-ignore:
-      - main
-      - release*
+    branches: ['**']
+
+permissions:
+  contents: read
 
 jobs:
   clippy:
@@ -24,7 +26,7 @@ jobs:
         run: rustup component add clippy
 
       - name: Cargo Fetch
-        run: cargo fetch
+        run: cargo fetch --locked
 
       - name: Check formatting
         run: cargo fmt --all -- --check

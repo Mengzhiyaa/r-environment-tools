@@ -20,6 +20,8 @@ pub struct REnv {
     pub symlinks: Option<Vec<PathBuf>>,
     /// Architecture of the R installation (e.g. from `R.version$arch`).
     pub arch: Option<Architecture>,
+    /// Whether a macOS launcher is independent of the framework's current version.
+    pub orthogonal: Option<bool>,
 }
 
 impl REnv {
@@ -34,6 +36,7 @@ impl REnv {
             known_executables: None,
             symlinks: None,
             arch: None,
+            orthogonal: None,
         }
     }
 }

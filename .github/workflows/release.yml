@@ -6,16 +6,21 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    uses: ./.github/workflows/build.yml
+  checks:
+    uses: ./.github/workflows/pr-check.yml
+
+  lint:
+    uses: ./.github/workflows/lint.yml
 
   release:
     name: Create Release
-    needs: build
+    needs: [checks, lint]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,6 +29,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: ret-release-*-archive
 
       - name: Package Artifacts
         run: |
@@ -33,20 +39,16 @@ jobs:
           # Linux and macOS targets → tar.gz
           for label in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
             dir="artifacts/ret-release-${label}-archive"
-            if [ -d "$dir" ]; then
-              chmod +x "${dir}/ret"
-              tar -czf "release/ret-${VERSION}-${label}.tar.gz" \
-                -C "$dir" ret
-            fi
+            chmod +x "${dir}/ret"
+            tar -czf "release/ret-${VERSION}-${label}.tar.gz" \
+              -C "$dir" ret
           done
 
           # Windows targets → tar.gz
           for label in windows-x64 windows-arm64; do
             dir="artifacts/ret-release-${label}-archive"
-            if [ -d "$dir" ]; then
-              tar -czf "release/ret-${VERSION}-${label}.tar.gz" \
-                -C "$dir" ret.exe
-            fi
+            tar -czf "release/ret-${VERSION}-${label}.tar.gz" \
+              -C "$dir" ret.exe
           done
 
       - name: Generate Checksums

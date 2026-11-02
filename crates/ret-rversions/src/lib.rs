@@ -9,7 +9,7 @@ use ret_core::{
         DiscoverySource, RInstallation, RInstallationBuilder, RInstallationKind, RVersionsOverlay,
     },
     reporter::Reporter,
-    Locator, LocatorKind,
+    Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
 use ret_module::{build_module_startup_command, find_modulecmd, looks_like_module_path};
 use ret_r_utils::{
@@ -20,6 +20,7 @@ use std::{
     collections::HashMap,
     env, mem,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -46,6 +47,7 @@ pub struct RVersions {
     modulecmd: Option<PathBuf>,
     xdg_config_home: Option<PathBuf>,
     xdg_config_dirs: Vec<PathBuf>,
+    entries: Mutex<Option<Arc<Vec<ResolvedRVersionsEntry>>>>,
 }
 
 impl RVersions {
@@ -63,7 +65,18 @@ impl RVersions {
             modulecmd: find_modulecmd(environment),
             xdg_config_home,
             xdg_config_dirs,
+            entries: Mutex::new(None),
         }
+    }
+
+    fn cached_entries(&self) -> Arc<Vec<ResolvedRVersionsEntry>> {
+        let mut entries = self
+            .entries
+            .lock()
+            .expect("r-versions entries mutex poisoned");
+        entries
+            .get_or_insert_with(|| Arc::new(self.load_entries()))
+            .clone()
     }
 
     fn load_entries(&self) -> Vec<ResolvedRVersionsEntry> {
@@ -142,6 +155,17 @@ impl Locator for RVersions {
         LocatorKind::RVersions
     }
 
+    fn configure(&self, _config: &Configuration) {
+        self.entries
+            .lock()
+            .expect("r-versions entries mutex poisoned")
+            .take();
+    }
+
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
+    }
+
     fn supported_categories(&self) -> Vec<RInstallationKind> {
         vec![
             RInstallationKind::Conda,
@@ -163,7 +187,8 @@ impl Locator for RVersions {
             return None;
         }
 
-        let matched = self.load_entries().into_iter().find(|entry| {
+        let entries = self.cached_entries();
+        let matched = entries.iter().find(|entry| {
             entry.startup_command.is_none()
                 && entry.environment_variables.is_none()
                 && (entry.resolved.executable == env.executable
@@ -174,7 +199,7 @@ impl Locator for RVersions {
                         .is_some_and(|paths| paths.contains(&env.executable)))
         })?;
 
-        Some(build_installation_from_env(env, &matched))
+        Some(build_installation_from_env(env, matched))
     }
 
     fn find(&self, reporter: &dyn Reporter) {
@@ -182,8 +207,17 @@ impl Locator for RVersions {
             return;
         }
 
-        for entry in self.load_entries() {
-            let installation = build_installation_from_resolved(&entry.resolved, &entry);
+        let entries = {
+            let mut cached = self
+                .entries
+                .lock()
+                .expect("r-versions entries mutex poisoned");
+            let entries = Arc::new(self.load_entries());
+            *cached = Some(entries.clone());
+            entries
+        };
+        for entry in entries.iter() {
+            let installation = build_installation_from_resolved(&entry.resolved, entry);
             if entry.startup_command.is_none() && entry.environment_variables.is_none() {
                 entry.resolved.add_to_cache(installation.clone());
             }
@@ -277,6 +311,7 @@ fn build_installation_from_env(env: &REnv, entry: &ResolvedRVersionsEntry) -> RI
         .display_name(entry.label.clone())
         .executable(Some(env.executable.clone()))
         .home(Some(home))
+        .orthogonal(env.orthogonal.or(entry.resolved.orthogonal))
         .version(
             env.version
                 .clone()
@@ -312,6 +347,7 @@ fn build_installation_from_resolved(
         .display_name(entry.label.clone())
         .executable(Some(resolved.executable.clone()))
         .home(Some(resolved.home.clone()))
+        .orthogonal(resolved.orthogonal)
         .version(Some(resolved.version.clone()))
         .arch(Some(resolved.arch.clone()))
         .known_executables(resolved.known_executables.clone())

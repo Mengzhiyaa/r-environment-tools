@@ -55,12 +55,19 @@ struct RequestLimit {
 
 impl RequestLimit {
     fn try_acquire(&self) -> Option<RequestPermit> {
-        self.active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < MAX_ACTIVE_REQUESTS).then_some(active + 1)
-            })
-            .ok()?;
-        Some(RequestPermit(self.active.clone()))
+        let mut active = self.active.load(Ordering::Acquire);
+        while active < MAX_ACTIVE_REQUESTS {
+            match self.active.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(RequestPermit(self.active.clone())),
+                Err(current) => active = current,
+            }
+        }
+        None
     }
 }
 
@@ -1022,10 +1029,21 @@ fn detect_inaccurate_environment(
         }
         _ => None,
     };
-    let invalid_prefix = discovered
-        .home
-        .as_ref()
-        .map(|_| discovered.home != resolved.home);
+    let invalid_prefix = discovered.home.as_ref().map(|home| {
+        let Some(resolved_home) = &resolved.home else {
+            return true;
+        };
+        if norm_case(home) == norm_case(resolved_home) {
+            return false;
+        }
+        match (
+            std::fs::canonicalize(home),
+            std::fs::canonicalize(resolved_home),
+        ) {
+            (Ok(home), Ok(resolved_home)) => home != resolved_home,
+            _ => true,
+        }
+    });
     let invalid_version = discovered
         .version
         .as_ref()
@@ -1197,6 +1215,25 @@ mod tests {
         assert_eq!(inaccuracy.invalid_executable, Some(false));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn detect_inaccurate_environment_accepts_linked_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("installation");
+        let linked_home = temp.path().join("linked-installation");
+        std::fs::create_dir_all(&home).unwrap();
+        std::os::unix::fs::symlink(&home, &linked_home).unwrap();
+        let discovered = RInstallationBuilder::new(Some(RInstallationKind::GlobalPaths))
+            .executable(Some(linked_home.join("bin/R")))
+            .home(Some(linked_home))
+            .build();
+        let resolved = RInstallationBuilder::from_installation(discovered.clone())
+            .home(Some(std::fs::canonicalize(&home).unwrap()))
+            .build();
+
+        assert!(detect_inaccurate_environment(&discovered, &resolved).is_none());
+    }
+
     #[test]
     fn stale_generation_reporter_drops_installations() {
         let configuration = Arc::new(RwLock::new(ConfigurationState {
@@ -1315,7 +1352,7 @@ mod tests {
             );
             assert_eq!(
                 state(LocatorKind::RVersions),
-                Some(RefreshStatePersistence::Stateless)
+                Some(RefreshStatePersistence::SelfHydratingCache)
             );
         }
     }

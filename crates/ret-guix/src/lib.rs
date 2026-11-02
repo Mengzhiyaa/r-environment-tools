@@ -102,6 +102,7 @@ impl Locator for Guix {
                 .display_name(Some("Guix R".to_string()))
                 .executable(Some(env.executable.clone()))
                 .home(Some(home))
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch

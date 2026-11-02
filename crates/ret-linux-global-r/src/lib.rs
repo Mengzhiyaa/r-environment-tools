@@ -29,7 +29,7 @@ impl LinuxGlobalR {
         }
     }
 
-    fn find_cached(&self, reporter: Option<&dyn Reporter>) {
+    fn find_cached(&self, reporter: &dyn Reporter) {
         if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
             return;
         }
@@ -121,7 +121,6 @@ impl Locator for LinuxGlobalR {
             return None;
         }
 
-        self.find_cached(None);
         self.reported_executables.get(&executable).or_else(|| {
             let arch = env
                 .arch
@@ -146,13 +145,13 @@ impl Locator for LinuxGlobalR {
             return;
         }
         self.reported_executables.clear();
-        self.find_cached(Some(reporter))
+        self.find_cached(reporter)
     }
 }
 
 fn find_and_report_global_r_in(
     bin: &Path,
-    reporter: Option<&dyn Reporter>,
+    reporter: &dyn Reporter,
     reported_executables: &Arc<LocatorCache<PathBuf, RInstallation>>,
 ) {
     for executable in find_executables(bin) {
@@ -185,9 +184,7 @@ fn find_and_report_global_r_in(
             }
             reported_executables.insert_many(entries);
 
-            if let Some(reporter) = reporter {
-                reporter.report_installation(&installation);
-            }
+            reporter.report_installation(&installation);
         }
     }
 }

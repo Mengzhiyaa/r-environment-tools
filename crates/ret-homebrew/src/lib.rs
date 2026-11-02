@@ -110,6 +110,7 @@ impl Locator for Homebrew {
                 .display_name(Some("Homebrew R".to_string()))
                 .executable(Some(env.executable.clone()))
                 .home(Some(home.clone()))
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch

@@ -78,6 +78,7 @@ impl Spack {
                 .display_name(Some("Spack R".to_string()))
                 .executable(Some(resolved_executable.clone()))
                 .home(Some(home))
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch

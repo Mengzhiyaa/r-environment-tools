@@ -14,6 +14,10 @@ on:
       - release/*
       - release-*
   workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
@@ -37,7 +41,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             run_cli: "yes"
           - os: macos-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             run_cli: "yes"
     steps:
       - name: Checkout
@@ -81,7 +85,7 @@ jobs:
       - name: Install Conda + add to PATH
         if: startsWith(matrix.os, 'macos')
         run: |
-          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
           bash ~/miniconda.sh -b -p ~/miniconda
           echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
           echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
@@ -116,6 +120,10 @@ jobs:
         run: choco install r.project --no-progress -y
         shell: bash
 
+      - name: Install musl tools
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       # ── Rust ──
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
@@ -124,7 +132,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch
+        run: cargo fetch --locked
         shell: bash
 
       - name: Find R Environments
@@ -133,7 +141,7 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --features ci -- --nocapture --test-threads=1
+        run: cargo test --frozen --target ${{ matrix.target }} --features ci -- --nocapture --test-threads=1
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: trace
@@ -179,6 +187,9 @@ jobs:
           which R
         shell: bash
 
+      - name: Install musl tools
+        run: apt-get update && apt-get install -y musl-tools
+
       # Rust
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
@@ -187,7 +198,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch
+        run: cargo fetch --locked
         shell: bash
 
       - name: Find R Environments
@@ -195,66 +206,11 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
+        run: cargo test --frozen --target ${{ matrix.target }} --features ${{ matrix.feature }} -- --nocapture
         shell: bash
 
   # ──────────────────────────────────────────────────────────────────
   # Job 3: Cross-platform builds
   # ──────────────────────────────────────────────────────────────────
   builds:
-    name: Build (${{ matrix.arch }}-${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform: windows
-            arch: x64
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            platform: windows
-            arch: arm64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            platform: linux
-            arch: x64
-            run_cli: "yes"
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            platform: darwin
-            arch: x64
-            run_cli: "yes"
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            platform: darwin
-            arch: arm64
-            run_cli: "yes"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
-
-      - name: Run Tests
-        run: cargo test --frozen
-        shell: bash
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        shell: bash
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ret-release-${{ matrix.platform }}-${{ matrix.arch }}-archive
-          path: target/${{ matrix.target }}/release/ret*
+    uses: ./.github/workflows/build.yml

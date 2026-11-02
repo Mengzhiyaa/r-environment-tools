@@ -62,6 +62,10 @@ pub fn executable_candidates_for_platform(
             directories.push(root.join("bin").join(arch));
             // Also accept a bin directory supplied directly by the caller.
             directories.push(root.join(arch));
+            directories.push(root.join("lib/R/bin").join(arch));
+            directories.push(root.join("lib64/R/bin").join(arch));
+            directories.push(root.join("Library/lib/R/bin").join(arch));
+            directories.push(root.join("Library/lib64/R/bin").join(arch));
         }
     }
     directories.extend([

@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use std::{
-    env, fs,
+    fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -52,24 +52,7 @@ fn write_fake_r_runtime(path: &Path, home: &Path, version: &str) {
 }
 
 fn ret_executable() -> PathBuf {
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_ret") {
-        return PathBuf::from(path);
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("failed to determine workspace root");
-    let executable = workspace_root.join("target").join("debug").join("ret");
-
-    assert!(
-        executable.is_file(),
-        "ret executable not found at {}",
-        executable.display()
-    );
-
-    executable
+    PathBuf::from(env!("CARGO_BIN_EXE_ret"))
 }
 
 fn run_ret<I, S>(args: I) -> Output
@@ -98,6 +81,7 @@ fn parse_stdout_json(output: &Output) -> Value {
 #[test]
 fn find_json_reports_fake_installation() {
     let fake = FakeRInstallation::new("4.4.1");
+    let expected_home = fs::canonicalize(&fake.home).expect("failed to canonicalize R home");
     let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
     let output = run_ret([
         "find",
@@ -114,7 +98,7 @@ fn find_json_reports_fake_installation() {
         .expect("installations should be an array");
     let installation = installations
         .iter()
-        .find(|item| item["home"] == fake.home.to_string_lossy().as_ref())
+        .find(|item| item["home"] == expected_home.to_string_lossy().as_ref())
         .expect("fake installation was not reported");
 
     assert_eq!(
@@ -128,6 +112,7 @@ fn find_json_reports_fake_installation() {
 #[test]
 fn resolve_json_reports_installation() {
     let fake = FakeRInstallation::new("4.2.0");
+    let expected_home = fs::canonicalize(&fake.home).expect("failed to canonicalize R home");
     let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
     let output = run_ret([
         "resolve",
@@ -138,7 +123,7 @@ fn resolve_json_reports_installation() {
     ]);
 
     let value = parse_stdout_json(&output);
-    assert_eq!(value["home"], fake.home.to_string_lossy().as_ref());
+    assert_eq!(value["home"], expected_home.to_string_lossy().as_ref());
     assert_eq!(
         value["executable"],
         fake.executable.to_string_lossy().as_ref()
@@ -184,9 +169,10 @@ fn resolve_accepts_version_directories_with_internal_r_layouts() {
         let executable = home.join("bin/R");
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
         write_fake_r_runtime(&executable, &home, "4.4.0");
+        let expected_home = fs::canonicalize(&home).expect("failed to canonicalize R home");
         let output = run_ret(["resolve", temp.path().to_str().unwrap(), "--json"]);
         let value = parse_stdout_json(&output);
-        assert_eq!(value["home"], home.to_string_lossy().as_ref());
+        assert_eq!(value["home"], expected_home.to_string_lossy().as_ref());
         assert_eq!(value["executable"], executable.to_string_lossy().as_ref());
     }
 }

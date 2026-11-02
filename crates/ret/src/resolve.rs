@@ -56,6 +56,7 @@ pub fn resolve_installation(
             let resolved = RInstallationBuilder::from_installation(resolved_base)
                 .executable(Some(info.executable.clone()))
                 .home(Some(info.home.clone()))
+                .orthogonal(info.orthogonal)
                 .version(Some(info.version.clone()))
                 .arch(Some(info.arch.clone()))
                 .known_executables(Some(known_executables))

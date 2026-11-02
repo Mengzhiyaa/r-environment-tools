@@ -4,6 +4,9 @@ on:
   workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build (${{ matrix.arch }}-${{ matrix.platform }})
@@ -16,7 +19,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             platform: windows
             arch: x64
-          - os: windows-latest
+          - os: windows-11-arm
             target: aarch64-pc-windows-msvc
             platform: windows
             arch: arm64
@@ -24,11 +27,11 @@ jobs:
             target: x86_64-unknown-linux-musl
             platform: linux
             arch: x64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             platform: linux
             arch: arm64
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             platform: darwin
             arch: x64
@@ -40,18 +43,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install musl tools (Linux x64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+      - name: Install musl tools
+        if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Install cross-compilation tools (Linux arm64)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
-          sudo ln -s /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-musl-gcc
-          mkdir -p .cargo
-          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
 
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
@@ -60,7 +54,12 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch
+        run: cargo fetch --locked
+
+      - name: Run Tests
+        run: cargo test --frozen --workspace --target ${{ matrix.target }}
+        env:
+          RUST_BACKTRACE: 1
 
       - name: Build Release
         run: cargo build --frozen --release --target ${{ matrix.target }}

@@ -46,6 +46,7 @@ impl Rig {
                 .display_name(Some("rig managed R".to_string()))
                 .executable(Some(env.executable.clone()))
                 .home(Some(home))
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch

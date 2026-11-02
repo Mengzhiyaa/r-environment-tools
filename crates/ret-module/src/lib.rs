@@ -52,6 +52,7 @@ impl EnvironmentModule {
                 .display_name(Some("Module R".to_string()))
                 .executable(Some(env.executable.clone()))
                 .home(Some(home))
+                .orthogonal(env.orthogonal)
                 .version(env.version.clone())
                 .arch(
                     env.arch
@@ -108,6 +109,7 @@ impl Locator for EnvironmentModule {
         }
 
         for module_name in &r_modules {
+            let startup_command = build_module_startup_command(modulecmd, module_name);
             // Resolve the R binary by loading the module in a subshell and
             // extracting the PATH it adds.
             if let Some(resolved) = resolve_r_installation_from_module(modulecmd, module_name) {
@@ -116,10 +118,10 @@ impl Locator for EnvironmentModule {
                 // trees are not restricted to the common path names above.
                 if let Some(installation) = self.installation_from_env(&env) {
                     let installation = RInstallationBuilder::from_installation(installation)
-                        .startup_command(Some(build_module_startup_command(modulecmd, module_name)))
+                        .startup_command(Some(startup_command.clone()))
                         .locator_metadata(Some(LocatorMetadata::Module {
                             module_name: module_name.clone(),
-                            startup_command: build_module_startup_command(modulecmd, module_name),
+                            startup_command: startup_command.clone(),
                         }))
                         .build();
                     if let Some(manager) = &installation.manager {
@@ -270,7 +272,7 @@ fn is_r_module_name(name: &str) -> bool {
 
 /// Resolve the R binary from loading a module.
 ///
-/// Runs: `eval $(modulecmd sh load <module>) && which R`
+/// Loads the module and returns the R path from the resulting environment.
 pub fn resolve_r_from_module(modulecmd: &Path, module_name: &str) -> Option<PathBuf> {
     let script = format!(
         "{} 2>/dev/null && command -v R",

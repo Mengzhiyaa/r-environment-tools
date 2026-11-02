@@ -63,11 +63,34 @@ impl Client {
         self.send_body(&serde_json::to_vec(&message).unwrap(), true);
     }
 
-    fn receive(&self) -> Value {
-        self.messages
-            .recv_timeout(Duration::from_secs(10))
-            .expect("server did not respond before the deadline")
-            .expect("invalid response frame")
+    fn receive_response(&self, expected_id: &Value) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "server did not respond before the deadline"
+            );
+            let message = self
+                .messages
+                .recv_timeout(remaining)
+                .expect("server did not respond before the deadline")
+                .expect("invalid response frame");
+            if message.get("method").is_some() {
+                assert!(
+                    message.get("id").is_none(),
+                    "unexpected server request: {message}"
+                );
+                continue;
+            }
+            // These tests send one request at a time; another response ID is an error.
+            assert_eq!(
+                message.get("id"),
+                Some(expected_id),
+                "unexpected response: {message}"
+            );
+            return message;
+        }
     }
 
     fn assert_exits_after_eof(&mut self) {
@@ -132,7 +155,7 @@ fn string_and_large_ids_round_trip_with_additional_headers() {
         Value::Null,
     ] {
         client.send(json!({"jsonrpc": "2.0", "id": id, "method": "configure", "params": {}}));
-        let reply = client.receive();
+        let reply = client.receive_response(&id);
         assert_eq!(reply["id"], id);
         assert!(reply.get("error").is_none(), "{reply}");
         assert_eq!(reply["result"], Value::Null);
@@ -158,11 +181,11 @@ fn eof_without_requests_and_eof_inside_a_frame_both_terminate() {
 fn parse_errors_receive_a_response_and_do_not_corrupt_the_next_frame() {
     let mut client = Client::spawn();
     client.send_body(b"{", false);
-    let error = client.receive();
+    let error = client.receive_response(&Value::Null);
     assert_eq!(error["error"]["code"], -32700);
     assert!(error["id"].is_null());
     client.send(json!({"jsonrpc": "2.0", "id": "next", "method": "configure", "params": {}}));
-    let reply = client.receive();
+    let reply = client.receive_response(&json!("next"));
     assert_eq!(reply["id"], "next");
     assert!(reply.get("error").is_none());
 }
@@ -172,7 +195,7 @@ fn unknown_notification_does_not_produce_a_reply() {
     let mut client = Client::spawn();
     client.send(json!({"jsonrpc": "2.0", "method": "unknown", "params": {}}));
     client.send(json!({"jsonrpc": "2.0", "id": "known", "method": "configure", "params": {}}));
-    let reply = client.receive();
+    let reply = client.receive_response(&json!("known"));
     assert_eq!(reply["id"], "known");
     assert!(reply.get("error").is_none());
 }
@@ -183,21 +206,30 @@ fn deleted_installation_is_not_returned_by_a_long_lived_server() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("installation");
-    let executable = home.join("bin").join("R");
-    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    // Exercise canonicalization of an inferred home, as happens with
+    // /var -> /private/var on macOS runners.
+    let alias = temp.path().join("installation-alias");
+    std::os::unix::fs::symlink(&home, &alias).unwrap();
+    let executable = alias.join("bin").join("R");
+    // A launcher may report an R home inside its prefix. This deliberately
+    // emits telemetry before the resolve response on every Unix platform.
+    let reported_home = home.join("lib/R");
+    std::fs::create_dir_all(&reported_home).unwrap();
     let script = format!(
         "#!/bin/sh\nprintf 'ret-r-installation-info\\n4.4.0\\n%s\\nx86_64\\n' {}\n",
-        ret_core::shell::quote_shell_argument(&home.to_string_lossy())
+        ret_core::shell::quote_shell_argument(&reported_home.to_string_lossy())
     );
     std::fs::write(&executable, script).unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut client = Client::spawn();
     client.send(json!({"jsonrpc": "2.0", "id": 1, "method": "resolve", "params": {"executable": executable}}));
-    let first = client.receive();
+    let first = client.receive_response(&json!(1));
+    assert!(first.get("error").is_none(), "{first}");
     assert_eq!(first["result"]["version"], "4.4.0");
     std::fs::remove_dir_all(home).unwrap();
     client.send(json!({"jsonrpc": "2.0", "id": 2, "method": "resolve", "params": {"executable": executable}}));
-    let second = client.receive();
+    let second = client.receive_response(&json!(2));
     assert_eq!(second["id"], 2);
     assert!(
         second.get("error").is_some(),

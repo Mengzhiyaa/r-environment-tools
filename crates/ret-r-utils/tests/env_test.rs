@@ -54,14 +54,17 @@ fn write_fake_r_runtime(path: &Path, home: &Path, version: &str) {
 }
 
 #[test]
-fn resolved_installation_uses_reported_home_and_version() {
+fn resolved_installation_normalizes_reported_home_and_preserves_version() {
     let fake = FakeRInstallation::new("4.4.0");
 
     let installation =
         ResolvedRInstallation::from(&fake.executable).expect("failed to resolve fake runtime");
 
     assert_eq!(installation.executable, fake.executable);
-    assert_eq!(installation.home, fake.home);
+    assert_eq!(
+        installation.home,
+        fs::canonicalize(&fake.home).expect("failed to canonicalize R home")
+    );
     assert_eq!(installation.version, "4.4.0");
     assert_eq!(installation.arch.to_string(), "x86_64");
     assert!(installation
@@ -79,7 +82,10 @@ fn resolving_rscript_preserves_the_requested_entrypoint() {
         ResolvedRInstallation::from(&fake.rscript).expect("failed to resolve fake runtime");
 
     assert_eq!(installation.executable, fake.rscript);
-    assert_eq!(installation.home, fake.home);
+    assert_eq!(
+        installation.home,
+        fs::canonicalize(&fake.home).expect("failed to canonicalize R home")
+    );
     assert_eq!(installation.version, "4.1.3");
 }
 
@@ -138,7 +144,10 @@ exec {} "$@"
     fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
     let resolved = ResolvedRInstallation::from(&wrapper).unwrap();
     assert_eq!(resolved.executable, wrapper);
-    assert_eq!(resolved.home, fake.home);
+    assert_eq!(
+        resolved.home,
+        fs::canonicalize(&fake.home).expect("failed to canonicalize R home")
+    );
     let output = std::process::Command::new(resolved.executable)
         .output()
         .unwrap();

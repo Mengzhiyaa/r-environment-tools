@@ -2,7 +2,7 @@
 
 use serde_json::{json, Value};
 use std::{
-    env, fs,
+    fs,
     io::{BufRead, BufReader, Read, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -79,24 +79,7 @@ fn write_fake_r_runtime(path: &Path, home: &Path, version: &str) {
 }
 
 fn ret_executable() -> PathBuf {
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_ret") {
-        return PathBuf::from(path);
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("failed to determine workspace root");
-    let executable = workspace_root.join("target").join("debug").join("ret");
-
-    assert!(
-        executable.is_file(),
-        "ret executable not found at {}",
-        executable.display()
-    );
-
-    executable
+    PathBuf::from(env!("CARGO_BIN_EXE_ret"))
 }
 
 struct RetJsonRpcClient {
@@ -232,6 +215,12 @@ fn refresh_search_paths_override_configured_directories() {
     let configured = FakeRInstallation::new("4.2.1");
     let requested = FakeRInstallation::new("4.3.0");
     let requested_root = requested.root().to_path_buf();
+    let expected_requested_home =
+        fs::canonicalize(&requested.home).expect("failed to canonicalize requested R home");
+    let expected_configured_home =
+        fs::canonicalize(&configured.home).expect("failed to canonicalize configured R home");
+    let expected_root =
+        fs::canonicalize(&requested_root).expect("failed to canonicalize requested search root");
     let mut client = RetJsonRpcClient::spawn();
 
     let configure_result = client.send_request(
@@ -259,13 +248,13 @@ fn refresh_search_paths_override_configured_directories() {
     assert!(
         installations
             .iter()
-            .any(|inst| inst["home"] == requested.home.to_string_lossy().as_ref()),
+            .any(|inst| inst["home"] == expected_requested_home.to_string_lossy().as_ref()),
         "requested installation should be reported"
     );
     assert!(
         installations.iter().all(|inst| !matches!(
             inst["home"].as_str(),
-            Some(home) if home == configured.home.to_string_lossy().as_ref()
+            Some(home) if home == expected_configured_home.to_string_lossy().as_ref()
         )),
         "configured workspace directories must not leak into refresh(searchPaths)"
     );
@@ -274,7 +263,11 @@ fn refresh_search_paths_override_configured_directories() {
             inst["home"]
                 .as_str()
                 .or_else(|| inst["executable"].as_str())
-                .map(|path| path.starts_with(requested.root().to_string_lossy().as_ref()))
+                .map(|path| {
+                    fs::canonicalize(path)
+                        .expect("reported installation path should exist")
+                        .starts_with(&expected_root)
+                })
                 .unwrap_or(false)
         }),
         "refresh(searchPaths) should stay within the requested tree"
@@ -284,6 +277,7 @@ fn refresh_search_paths_override_configured_directories() {
 #[test]
 fn find_resolve_conda_info_and_clear_cache() {
     let fake = FakeRInstallation::new("4.4.0");
+    let expected_home = fs::canonicalize(&fake.home).expect("failed to canonicalize R home");
     let cache_dir = tempfile::tempdir().expect("failed to create cache dir");
     let marker = cache_dir.path().join("marker");
     let mut client = RetJsonRpcClient::spawn();
@@ -303,12 +297,15 @@ fn find_resolve_conda_info_and_clear_cache() {
         .expect("find should return an array of RInstallation");
     let found = installations
         .iter()
-        .find(|inst| inst["home"] == fake.home.to_string_lossy().as_ref())
+        .find(|inst| inst["home"] == expected_home.to_string_lossy().as_ref())
         .expect("find did not return the fake installation");
     assert_eq!(found["version"], "4.4.0");
 
     let resolve_result = client.send_request("resolve", json!({ "executable": fake.executable }));
-    assert_eq!(resolve_result["home"], fake.home.to_string_lossy().as_ref());
+    assert_eq!(
+        resolve_result["home"],
+        expected_home.to_string_lossy().as_ref()
+    );
     assert_eq!(
         resolve_result["executable"],
         fake.executable.to_string_lossy().as_ref()

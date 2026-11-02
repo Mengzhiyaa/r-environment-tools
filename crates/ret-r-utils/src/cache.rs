@@ -203,6 +203,7 @@ impl CacheEntry for CacheEntryImpl {
             .clone()
             .unwrap_or_default()
             .iter()
+            .chain(installation.metadata_files.iter())
         {
             if let Ok(metadata) = executable.metadata() {
                 if let Ok(modified) = metadata.modified() {
@@ -281,6 +282,8 @@ mod tests {
             arch: Architecture::X64,
             known_executables: Some(vec![executable.to_path_buf()]),
             symlinks: None,
+            orthogonal: None,
+            metadata_files: Vec::new(),
         }
     }
 
