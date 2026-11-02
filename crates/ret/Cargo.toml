@@ -48,4 +48,3 @@ log = "0.4.21"
 
 [features]
 ci = []
-ci-homebrew-container = []

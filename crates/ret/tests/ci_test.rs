@@ -252,6 +252,37 @@ fn check_if_conda_r_exists() {
     }
 }
 
+/// Explicitly run by the Linux and macOS jobs after `brew install r`.
+/// Coverage jobs also enable `ci` but do not install Homebrew R.
+#[cfg(all(unix, feature = "ci"))]
+#[test]
+#[ignore = "requires an R installation from Homebrew"]
+fn check_if_homebrew_r_exists() {
+    setup();
+
+    let installations = discover_all_installations();
+    let homebrew_installations: Vec<_> = installations
+        .iter()
+        .filter(|installation| installation.kind == Some(RInstallationKind::Homebrew))
+        .collect();
+
+    assert!(
+        !homebrew_installations.is_empty(),
+        "CI must discover the Homebrew R installed by the workflow; found: {installations:?}"
+    );
+    for installation in homebrew_installations {
+        assert!(
+            installation
+                .executable
+                .as_ref()
+                .is_some_and(|path| path.is_file())
+                && installation.home.as_ref().is_some_and(|path| path.is_dir())
+                && installation.version.is_some(),
+            "Homebrew R must have an existing executable and home, and a version: {installation:?}"
+        );
+    }
+}
+
 /// For each installation, verify we can reconstruct the environment using
 /// the find API (exercising the JSONRPC code path without spawning R).
 #[cfg_attr(feature = "ci", test)]

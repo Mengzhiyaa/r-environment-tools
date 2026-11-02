@@ -34,7 +34,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             run_cli: "yes"
           - os: windows-latest
@@ -62,12 +62,23 @@ jobs:
           which R || where R
         shell: bash
 
-      # ── Homebrew (macOS only) ──
-      # Homebrew is the native package manager on macOS.
-      # This tests the Homebrew locator against a real brew-installed R.
+      # ── Homebrew (Linux and macOS) ──
+      # Ubuntu includes Linuxbrew, but does not add it to PATH.
+      - name: Add Homebrew to PATH (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          echo "$HOMEBREW_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "$HOMEBREW_PREFIX/sbin" >> "$GITHUB_PATH"
+          echo "HOMEBREW_PREFIX=$HOMEBREW_PREFIX" >> "$GITHUB_ENV"
+          echo "HOMEBREW_CELLAR=$HOMEBREW_CELLAR" >> "$GITHUB_ENV"
+        shell: bash
+
       - name: Homebrew R
-        if: startsWith(matrix.os, 'macos')
+        if: runner.os != 'Windows'
         run: brew install r
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         shell: bash
 
       # ── Conda (all platforms) ──
@@ -147,70 +158,13 @@ jobs:
           RUST_LOG: trace
         shell: bash
 
-  # ──────────────────────────────────────────────────────────────────
-  # Job 2: Container tests
-  #
-  # Homebrew on Ubuntu requires a container (homebrew/brew image)
-  # because Linuxbrew is not trivially installable on standard
-  # runners. This mirrors PET's ci-homebrew-container approach.
-  # ──────────────────────────────────────────────────────────────────
-  container-tests:
-    name: Tests in Containers
-    container:
-      image: ${{ matrix.image }}
-      options: --user=root
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - feature: ci-homebrew-container
-            os: ubuntu-latest
-            image: ghcr.io/homebrew/brew:latest
-            target: x86_64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Homebrew R (Linuxbrew)
-      - name: Homebrew R
-        if: contains(matrix.image, 'homebrew/brew')
-        # GitHub Actions needs the container to run as root to access the
-        # mounted workspace, but Homebrew refuses to update or install as root.
-        # Run the Homebrew commands as the image's non-root linuxbrew user.
-        run: su - linuxbrew -c '/home/linuxbrew/.linuxbrew/bin/brew update && /home/linuxbrew/.linuxbrew/bin/brew install r'
-        shell: bash
-
-      - name: Verify R installation
-        run: |
-          R --version
-          which R
-        shell: bash
-
-      - name: Install musl tools
-        run: apt-get update && apt-get install -y musl-tools
-
-      # Rust
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      - name: Cargo Fetch
-        run: cargo fetch --locked
-        shell: bash
-
-      - name: Find R Environments
-        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
-        shell: bash
-
-      - name: Run Tests
-        run: cargo test --frozen --target ${{ matrix.target }} --features ${{ matrix.feature }} -- --nocapture
+      - name: Verify Homebrew R discovery
+        if: runner.os != 'Windows'
+        run: cargo test --frozen --target ${{ matrix.target }} --features ci --test ci_test check_if_homebrew_r_exists -- --ignored --nocapture
         shell: bash
 
   # ──────────────────────────────────────────────────────────────────
-  # Job 3: Cross-platform builds
+  # Job 2: Cross-platform builds
   # ──────────────────────────────────────────────────────────────────
   builds:
     uses: ./.github/workflows/build.yml
